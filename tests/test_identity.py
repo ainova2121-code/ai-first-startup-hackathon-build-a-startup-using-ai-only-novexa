@@ -14,7 +14,7 @@ from purpleteam.attack.identity import IDENTITY_OBJECTIVES, identity_corpus
 from purpleteam.audit.ledger import AuditLedger
 from purpleteam.defender.selector import Defender, Finding
 from purpleteam.discovery import AgentInfo, DiscoveredTool, TargetProfile
-from purpleteam.identity import PermissionManifest, check_credentials, inventory, posture
+from purpleteam.identity import PermissionManifest, baseline, check_baseline, check_credentials, drift, inventory, posture
 from purpleteam.oracle import HONEYTOKEN, AnyOracle, LeakOracle, ScopeOracle
 from purpleteam.patches.base import Blocked
 from purpleteam.patches.rules import AgentScopeGuard
@@ -43,6 +43,36 @@ def test_a_manifest_file_is_validated(tmp_path):
     path = tmp_path / "manifest.json"
     path.write_text(json.dumps({"vendor": ["lookup_vendor"]}))
     assert PermissionManifest.load(path).permits("vendor", "lookup_vendor")
+
+
+MODEL_PROFILE = TargetProfile("t", [_tool("lookup_vendor", "read", "vendor")],
+                              [AgentInfo("vendor", "You manage vendors.", ("lookup_vendor",), model="gpt-4o")])
+
+
+def test_baseline_includes_the_model_name_when_known():
+    assert baseline(MODEL_PROFILE)["vendor"]["model"] == "gpt-4o"
+
+
+def test_a_baseline_saved_before_the_model_field_existed_still_loads():
+    old = {"vendor": {"tools": ["lookup_vendor"], "prompt_sha256": None}}  # no "model" key at all
+    assert check_baseline(old)["vendor"]["tools"] == ["lookup_vendor"]
+
+
+def test_check_baseline_rejects_an_invalid_model_name():
+    with pytest.raises(ValueError):
+        check_baseline({"vendor": {"tools": [], "prompt_sha256": None, "model": "not a valid name!"}})
+
+
+def test_drift_flags_a_model_swap_but_not_when_either_side_is_unknown():
+    saved = baseline(MODEL_PROFILE)
+    swapped = TargetProfile("t", [_tool("lookup_vendor", "read", "vendor")],
+                            [AgentInfo("vendor", "You manage vendors.", ("lookup_vendor",), model="gpt-3.5-turbo")])
+    (finding,) = drift(swapped, saved)
+    assert finding.kind == "model_changed" and "gpt-4o" in finding.detail and "gpt-3.5-turbo" in finding.detail
+
+    unknown_now = TargetProfile("t", [_tool("lookup_vendor", "read", "vendor")],
+                                [AgentInfo("vendor", "You manage vendors.", ("lookup_vendor",))])  # no model known now
+    assert drift(unknown_now, saved) == []  # cannot call it drift when one side was never observed
     assert PermissionManifest.from_dict(INTENDED.to_dict()) == INTENDED
     for bad in ([], {"vendor": "lookup_vendor"}, {"vendor": ["bad!name"]}, {"vendor": ["x\ny"]}, {"bad!agent": []},
                 {"vendor": [1]}, {f"a{i}": [] for i in range(201)}, {"vendor": [f"t{i}" for i in range(501)]},

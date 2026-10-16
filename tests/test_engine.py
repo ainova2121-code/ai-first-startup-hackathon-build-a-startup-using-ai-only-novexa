@@ -127,6 +127,14 @@ def test_begin_attempt_clears_only_the_observation_not_the_attempt_history():
     assert wrapper.last_observation is None and wrapper.attempts == ["first"]
 
 
+def test_observations_accumulate_across_the_whole_session_not_just_the_last_one():
+    # a search that branches needs every observation, not only the most recent call (see attack.adaptive)
+    wrapper = PlatformPromptTarget(target=_FakeTarget(Observation("ok", [])))
+    asyncio.run(run_attempt(_execute(wrapper, "first"), wrapper, ORACLE, timeout=5))
+    asyncio.run(run_attempt(_execute(wrapper, "second"), wrapper, ORACLE, timeout=5))
+    assert len(wrapper.observations) == 2 and wrapper.observations[-1] is wrapper.last_observation
+
+
 def test_a_daemon_thread_that_outlives_its_loop_does_not_raise_unhandled():
     """The loop that a very late worker thread tries to notify may already be closed (asyncio.run closes it as
     soon as the coroutine that abandoned the thread returns); that must be swallowed, not crash the thread."""

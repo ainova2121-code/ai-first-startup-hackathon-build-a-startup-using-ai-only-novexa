@@ -4,7 +4,8 @@ PyRIT drives the conversation: an adversarial model writes each attempt and send
 here. We run it through the wrapped target and keep the resulting Observation. Success is
 never read from the reply — the OracleScorer reads ``last_observation`` instead, so an
 agent that says "I can't do that" while it quietly wires the money out is still scored as
-breached.
+breached. ``observations`` additionally keeps every send this session, for a search that
+branches (PAIR, TAP): the breach, if any, is not necessarily on the last call made.
 
 The target's ``send`` is a blocking call (HTTP, a database), so it runs in a worker thread;
 otherwise a timeout, which can only interrupt code that yields to the event loop, would
@@ -84,6 +85,7 @@ class PlatformPromptTarget(PromptTarget):
         self._target = target
         self._reset_each_turn = reset_each_turn  # an agent target resets per request; a stateful chat target does not
         self.last_observation: Observation | None = None
+        self.observations: list[Observation] = []  # every real send this session, for a search that branches
         self.attempts: list[str] = []
         self._in_flight = False
 
@@ -109,6 +111,7 @@ class PlatformPromptTarget(PromptTarget):
             raise
         self._in_flight = False
         self.last_observation = observation
+        self.observations.append(observation)
         reply = observation.reply or "(no reply)"
         return [Message.from_prompt(prompt=reply, role="assistant")]
 

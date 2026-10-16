@@ -46,6 +46,21 @@ def test_profile_comes_from_the_request_alone():
     assert profile.dangerous_tools == {"update_record"} and len(profile.agents) == 1
 
 
+def test_an_agents_model_is_read_from_the_request_body_without_being_told_explicitly():
+    observer = GatewayObserver()
+    observer.observe(_request())  # _request() sets {"model": "m", ...}; no explicit model= argument given
+    (agent,) = observer.profile("p").agent_info
+    assert agent.model == "m" and observer.summary()["agents"][0]["model"] == "m"
+
+
+def test_an_explicit_model_overrides_the_request_body_and_a_later_exchange_does_not_change_it():
+    observer = GatewayObserver()
+    observer.observe(_request(), model="gemini-2.0-flash")  # as the gateway resolves it for Gemini, from the URL
+    observer.observe(_request())  # a later exchange for the same agent must not overwrite the first model seen
+    (agent,) = observer.profile("p").agent_info
+    assert agent.model == "gemini-2.0-flash"
+
+
 def test_prompt_is_reported_only_as_a_hash():
     observer = GatewayObserver()
     observer.observe(_request(system="secret prompt text sk-live-123"))

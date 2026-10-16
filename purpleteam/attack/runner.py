@@ -43,7 +43,7 @@ class CampaignResult:
     attempts: list[str] = field(default_factory=list)
 
 
-def _adversarial_target(model: str | None) -> OpenAIChatTarget:
+def adversarial_target(model: str | None = None) -> OpenAIChatTarget:
     key = (os.environ.get("PURPLETEAM_ATTACKER_KEY") or os.environ.get("GROQ_API_KEY")
            or os.environ.get("LEDGERPILOT_LLM_API_KEY"))
     if not key:
@@ -77,7 +77,7 @@ async def run_campaign(
     attack = STRATEGIES[strategy](
         objective_target=pyrit_target,
         attack_adversarial_config=AttackAdversarialConfig(
-            target=_adversarial_target(adversarial_model), system_prompt=ATTACKER_SYSTEM_PROMPT
+            target=adversarial_target(adversarial_model), system_prompt=ATTACKER_SYSTEM_PROMPT
         ),
         attack_scoring_config=AttackScoringConfig(objective_scorer=scorer),
         max_turns=max_turns,

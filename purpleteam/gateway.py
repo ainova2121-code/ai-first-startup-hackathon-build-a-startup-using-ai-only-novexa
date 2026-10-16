@@ -174,7 +174,7 @@ def create_gateway(observer: GatewayObserver, *, keys: GatewayKeys, openai: Prov
                 upstream_response = await http.send(http.build_request("POST", url, content=raw, headers=headers),
                                                     stream=True)
                 await withhold_if_inactive(upstream_response)
-                observer.observe(payload, None, hint, dialect, identity)
+                observer.observe(payload, None, hint, dialect, identity, model)
                 return StreamingResponse(_tee(upstream_response, observer, decisions, dialect, payload, hint, model,
                                               identity, lambda: keys.is_active(key_id)),
                                          status_code=upstream_response.status_code,
@@ -195,7 +195,7 @@ def create_gateway(observer: GatewayObserver, *, keys: GatewayKeys, openai: Prov
             if replacement is not None:
                 return JSONResponse(replacement, status_code=upstream_response.status_code)
         else:
-            observer.observe(payload, None, hint, dialect, identity)
+            observer.observe(payload, None, hint, dialect, identity, model)
         return Response(upstream_response.content, status_code=upstream_response.status_code,
                         media_type=upstream_response.headers.get("content-type"))
 

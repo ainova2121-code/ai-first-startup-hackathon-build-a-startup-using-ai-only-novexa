@@ -72,7 +72,7 @@ class DecisionPoint:
     def process(self, dialect: Dialect, payload: dict, response: dict, hint: str | None, model: str,
                 identity: str | None = None) -> dict | None:
         """Observe the answer, enforce on it, log it. Returns the answer to send instead, or None to send it as is."""
-        observed = self._observer.observe(payload, response, hint, dialect, identity)
+        observed = self._observer.observe(payload, response, hint, dialect, identity, model)
         verdicts = self._verdicts(observed)
         withhold = any(policy for _, policy in verdicts)
         self._record(observed, dialect, model, verdicts, withhold)

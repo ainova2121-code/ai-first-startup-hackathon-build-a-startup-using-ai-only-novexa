@@ -99,7 +99,7 @@ class CorpusResult:
     signals: tuple = ()  # extra pattern evidence on a proven breach (purpleteam.attack.signals.Signal); never a breach itself
 
 
-def _as_result(result_id: str, technique: str, summary: Summary, payload: str, signals: list) -> CorpusResult:
+def as_corpus_result(result_id: str, technique: str, summary: Summary, payload: str, signals: list) -> CorpusResult:
     fields = ((summary.verdict.kind, summary.verdict.tool, summary.verdict.agent, summary.verdict.evidence)
               if summary.verdict else ("", "", "", ""))
     return CorpusResult(result_id, technique, summary.outcome == BREACHED, summary.detail, *fields,
@@ -157,7 +157,7 @@ async def run_corpus(
             if pyrit_target.poisoned:
                 stuck = Trial(INCONCLUSIVE, "a previous attempt timed out and may still be running against the "
                               "target", reason="target poisoned by an earlier timeout")
-                results.append(_as_result(result_id, template.technique, summarize([stuck]), payload, []))
+                results.append(as_corpus_result(result_id, template.technique, summarize([stuck]), payload, []))
                 continue
             trials = []
             for _ in range(max(1, samples)):
@@ -170,7 +170,7 @@ async def run_corpus(
             # extra, specific evidence on a proven breach only: cheap and deterministic, never worth it otherwise
             observation = pyrit_target.last_observation
             signals = await scan_observation(observation) if summary.outcome == BREACHED and observation else []
-            results.append(_as_result(result_id, template.technique, summary, payload, signals))
+            results.append(as_corpus_result(result_id, template.technique, summary, payload, signals))
     return results
 
 

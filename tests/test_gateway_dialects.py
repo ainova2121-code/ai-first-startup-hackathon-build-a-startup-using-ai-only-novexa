@@ -232,6 +232,21 @@ def test_gemini_requests_are_forwarded_with_our_key_and_the_client_key_never_lea
     assert web.post("/v1/models/gemini-pro:generateContent", json=_gemini(), headers={"x-goog-api-key": TOKEN}).status_code == 200
 
 
+def test_gemini_model_is_read_from_the_url_not_the_body():
+    # the Gemini request body never carries a "model" field; the gateway resolves it from the URL path instead
+    web, observer, _ = _provider_app(lambda r: httpx.Response(200, json=_function_call()))
+    web.post("/v1beta/models/gemini-2.0-flash:generateContent", json=_gemini(), headers={"x-goog-api-key": TOKEN})
+    (agent,) = observer.profile("p").agent_info
+    assert agent.model == "gemini-2.0-flash"
+
+
+def test_anthropic_model_is_read_from_the_request_body():
+    web, observer, _ = _provider_app(lambda r: httpx.Response(200, json=_tool_use()))
+    web.post("/v1/messages", json=_anthropic(), headers={"x-api-key": TOKEN, "anthropic-version": "2023-06-01"})
+    (agent,) = observer.profile("p").agent_info
+    assert agent.model == "m"  # _anthropic() sets {"model": "m", ...}
+
+
 def test_gemini_keys_in_the_url_are_not_accepted_and_odd_paths_are_refused():
     web, _, seen = _provider_app(lambda r: httpx.Response(200, json=_function_call()))
     assert web.post(f"/v1beta/models/m:generateContent?key={TOKEN}", json=_gemini()).status_code == 401

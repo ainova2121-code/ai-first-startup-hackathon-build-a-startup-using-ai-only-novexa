@@ -73,8 +73,9 @@ class Observed:
 
 
 class _Agent:
-    def __init__(self, name: str, prompt: str, authenticated: bool) -> None:
+    def __init__(self, name: str, prompt: str, authenticated: bool, model: str | None = None) -> None:
         self.name, self.prompt, self.authenticated, self.claimed_other = name, prompt, authenticated, 0
+        self.model = model  # set once, from the first exchange seen — same convention as prompt
         self.tools: dict[str, DiscoveredTool] = {}
 
 
@@ -91,14 +92,18 @@ class GatewayObserver:
         self.errors: list[str] = []
 
     def observe(self, request: Any, response: Any = None, hint: str | None = None, dialect: Dialect = OPENAI,
-                identity: str | None = None) -> Observed:
-        """Record one exchange (``identity``: the agent its key is bound to, if any). Never raises: a malformed
-        one is noted and the traffic carries on."""
+                identity: str | None = None, model: str | None = None) -> Observed:
+        """Record one exchange (``identity``: the agent its key is bound to, if any; ``model``: the model name
+        the caller already resolved for this request — needed for Gemini, whose model name is in the URL, not
+        the body. Left unset, the OpenAI/Anthropic request body's own ``model`` field is used instead. Never
+        raises: a malformed exchange is noted and the traffic carries on."""
         try:
             with self._lock:
                 if isinstance(request, dict):
+                    resolved = model if model is not None else (
+                        request["model"] if isinstance(request.get("model"), str) else None)
                     return self._observe(dialect.parse(request, response if isinstance(response, dict) else {}), hint,
-                                         identity)
+                                         identity, resolved)
         except Exception as error:  # untrusted input on a proxy path must not break the target
             self.note(f"unreadable exchange ({type(error).__name__})")
         return Observed()
@@ -132,7 +137,7 @@ class GatewayObserver:
                 raise DiscoveryError("no model traffic has been seen yet; point the target's base URL at the gateway")
             agents = list(self._agents.values())
             return TargetProfile(name, [t for a in agents for t in a.tools.values()],
-                                 [AgentInfo(a.name, a.prompt, tuple(a.tools), a.authenticated, a.claimed_other)
+                                 [AgentInfo(a.name, a.prompt, tuple(a.tools), a.authenticated, a.claimed_other, a.model)
                                   for a in agents])
 
     def summary(self) -> dict:
@@ -140,7 +145,7 @@ class GatewayObserver:
         with self._lock:
             agents = [{"name": a.name, "prompt_sha256": AgentInfo(a.name, a.prompt).prompt_sha256,
                        "prompt_chars": len(a.prompt), "authenticated": a.authenticated,
-                       "claimed_other": a.claimed_other,
+                       "claimed_other": a.claimed_other, "model": a.model,
                        "tools": [{"name": t.name, "risk": t.risk, "called": (a.name, t.name) in self._called}
                                  for t in a.tools.values()]} for a in self._agents.values()]
             return {"agents": agents, "errors": list(self.errors),
@@ -151,8 +156,9 @@ class GatewayObserver:
         if len(self.errors) < MAX_ERRORS and message not in self.errors:
             self.errors.append(message)
 
-    def _observe(self, exchange: Exchange, hint: str | None, identity: str | None = None) -> Observed:
-        agent = self._agent_for(hint, exchange.system[:MAX_PROMPT], exchange.tools, identity)
+    def _observe(self, exchange: Exchange, hint: str | None, identity: str | None = None,
+                model: str | None = None) -> Observed:
+        agent = self._agent_for(hint, exchange.system[:MAX_PROMPT], exchange.tools, identity, model)
         if agent is None:
             return Observed(exchange=exchange)
         for name, description, schema in exchange.tools:
@@ -177,14 +183,15 @@ class GatewayObserver:
         key = hashlib.sha256((",".join(names) + "\x00" + exchange.system[:KEY_PROMPT_CHARS]).encode()).hexdigest()
         return hint if valid_name(hint) else f"agent-{key[:8]}"
 
-    def _agent_for(self, hint: str | None, prompt: str, declared: list, identity: str | None = None) -> _Agent | None:
+    def _agent_for(self, hint: str | None, prompt: str, declared: list, identity: str | None = None,
+                   model: str | None = None) -> _Agent | None:
         name = self.peek_agent(Exchange(system=prompt, tools=declared), hint, identity)
         agent = self._agents.get(name)
         if agent is None:
             if len(self._agents) >= MAX_AGENTS:
                 self._error(f"more than {MAX_AGENTS} distinct agents; send X-Purpleteam-Agent to name them")
                 return None
-            agent = self._agents[name] = _Agent(name, prompt, identity is not None)
+            agent = self._agents[name] = _Agent(name, prompt, identity is not None, model or None)
         agent.authenticated = agent.authenticated and identity is not None  # one unbound request taints the identity
         if identity is not None and valid_name(hint) and hint != identity:
             agent.claimed_other += 1  # a header naming another agent is never believed, only counted

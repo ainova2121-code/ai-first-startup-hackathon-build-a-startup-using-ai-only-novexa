@@ -89,7 +89,8 @@ class PermissionManifest:
 # (SCOPE_KINDS), or has the agent itself changed since the baseline it was last checked against (DRIFT_KINDS).
 SCOPE_KINDS = frozenset({"excess_privilege", "undeclared_agent", "unknown_agent", "duty_conflict",
                          "unscoped_execution", "shared_credential", "unauthenticated_agent", "identity_mismatch"})
-DRIFT_KINDS = frozenset({"agent_added", "agent_missing", "tools_added", "tools_removed", "prompt_changed"})
+DRIFT_KINDS = frozenset({"agent_added", "agent_missing", "tools_added", "tools_removed", "prompt_changed",
+                         "model_changed"})
 
 
 @dataclass(frozen=True)
@@ -158,11 +159,17 @@ def posture(profile: TargetProfile, manifest: PermissionManifest | None = None,
 
 
 def baseline(profile: TargetProfile) -> dict[str, dict[str, Any]]:
-    """What each agent is right now: its tools and a hash of its prompt. Never any prompt text."""
+    """What each agent is right now: its tools, a hash of its prompt, and the model name its traffic carried
+    (gateway-observed targets only; never any prompt text)."""
     info = {a.name: a for a in profile.agent_info}
     return {agent: {"tools": sorted(t.name for t in tools),
-                    "prompt_sha256": info[agent].prompt_sha256 if agent in info else None}
+                    "prompt_sha256": info[agent].prompt_sha256 if agent in info else None,
+                    "model": info[agent].model if agent in info else None}
             for agent, tools in _held(profile).items()}
+
+
+_BASELINE_FIELDS = ({"tools", "prompt_sha256"}, {"tools", "prompt_sha256", "model"})  # "model" is a later addition;
+# a baseline saved before it existed is still accepted, so an old saved file never needs migrating.
 
 
 def check_baseline(data: Any) -> dict[str, dict[str, Any]]:
@@ -170,13 +177,15 @@ def check_baseline(data: Any) -> dict[str, dict[str, Any]]:
     if not isinstance(data, dict) or len(data) > MAX_AGENTS:
         raise ValueError("a baseline maps agent names to what each agent was")
     for agent, entry in data.items():
-        if not (valid_name(agent) and isinstance(entry, dict) and set(entry) == {"tools", "prompt_sha256"}):
+        if not (valid_name(agent) and isinstance(entry, dict) and set(entry) in _BASELINE_FIELDS):
             raise ValueError(f"invalid baseline entry for agent {str(agent)[:40]!r}")
-        tools, digest = entry["tools"], entry["prompt_sha256"]
+        tools, digest, model = entry["tools"], entry["prompt_sha256"], entry.get("model")
         if not (isinstance(tools, list) and len(tools) <= MAX_TOOLS_PER_AGENT and all(valid_name(t) for t in tools)):
             raise ValueError(f"invalid tool list in the baseline entry for {agent!r}")
         if digest is not None and not (isinstance(digest, str) and _SHA256.fullmatch(digest)):
             raise ValueError(f"invalid prompt hash in the baseline entry for {agent!r}")
+        if model is not None and not valid_name(model):
+            raise ValueError(f"invalid model name in the baseline entry for {agent!r}")
     return data
 
 
@@ -200,6 +209,11 @@ def drift(profile: TargetProfile, saved: Any) -> list[IdentityFinding]:
             findings.append(IdentityFinding(
                 "prompt_changed", agent, (), "its instructions differ from the baseline (a prompt with changing text, "
                 "such as a date, differs on every run)", "medium"))
+        now_model, before_model = now[agent].get("model"), before[agent].get("model")
+        if None not in (now_model, before_model) and now_model != before_model:
+            findings.append(IdentityFinding(
+                "model_changed", agent, (), f"was answered by {before_model!r}, is now answered by {now_model!r}",
+                "medium"))
     return findings
 
 
@@ -243,7 +257,7 @@ def inventory(profile: TargetProfile, manifest: PermissionManifest | None, findi
         }
         if agent in info:
             entry |= {"prompt_sha256": info[agent].prompt_sha256, "prompt_chars": info[agent].prompt_chars,
-                      "authenticated": info[agent].authenticated}
+                      "authenticated": info[agent].authenticated, "model": info[agent].model}
         agents.append(entry)
     return {"manifest": "declared" if manifest is not None else "none", "agents": agents,
             "findings": [asdict(f) for f in findings], "needs_review": needs_review(profile),

@@ -100,6 +100,7 @@ class AgentInfo:
     tool_names: tuple[str, ...] = ()
     authenticated: bool | None = None  # True: its key says who it is. False: guessed. None: not known (in-process)
     claimed_other: int = 0  # requests under its key that claimed to be a different agent
+    model: str | None = None  # the model name its traffic carried, if seen through the gateway
 
     @property
     def prompt_sha256(self) -> str:
