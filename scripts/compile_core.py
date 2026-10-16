@@ -25,11 +25,17 @@ ROOT = Path(__file__).resolve().parent.parent
 # The modules that carry real proprietary logic (detection, scoring, patch selection, the signed
 # audit trail). Integration surfaces a customer extends per target (discovery, adapters, target
 # connectors, the LLM gateway) are deliberately left out: those must stay plain, readable Python.
+#
+# patches/rules.py and patches/scanners.py (the Patch subclasses themselves) are deliberately left
+# out too, for a different reason: Defender.select logs patch.code_hash() — a hash of the patch
+# class's own source, via inspect.getsource() — as audit-trail evidence of exactly which code was
+# applied. A compiled extension has no Python source to introspect, so compiling either module
+# would silently break that evidence rather than just hide the source; the tamper-evidence property
+# wins over the IP-protection property here.
 CORE_MODULES = [
     "purpleteam/oracle.py",
     "purpleteam/defender/selector.py",
     "purpleteam/patches/catalog.py",
-    "purpleteam/patches/rules.py",
     "purpleteam/attack/outcome.py",
     "purpleteam/attack/corpus.py",
     "purpleteam/attack/engine.py",
