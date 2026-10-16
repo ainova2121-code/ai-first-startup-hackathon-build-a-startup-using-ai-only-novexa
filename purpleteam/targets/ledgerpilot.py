@@ -18,11 +18,13 @@ from fastapi.testclient import TestClient
 from ledgerpilot.db.repositories import Ledger, VendorRepository, connect
 from ledgerpilot.db.seed import bank_account, load_manifest, seed
 from ledgerpilot.main import create_app
+from ledgerpilot.ports import Blocked as LedgerPilotBlocked
 from ledgerpilot.utils.config import Settings
 from purpleteam.adapter import Observation, ToolCall
 from purpleteam.capture import profile_runtime
 from purpleteam.discovery import TargetProfile
 from purpleteam.oracle import HONEYTOKEN
+from purpleteam.patches.base import Blocked as PlatformBlocked
 
 REPO_INVOICES = Path(__file__).resolve().parents[2] / "data" / "invoices"
 HONEYTOKEN_VENDOR = "ZZ-CANARY-VENDOR"
@@ -54,6 +56,27 @@ class _RecordingSink:
             self.calls[-1].result = str(payload.get("result", ""))  # whole: a cut would let padding hide a leak
 
 
+class _GuardAdapter:
+    """Lets the platform's own, domain-agnostic Guard attach to LedgerPilot's guard port, whose
+    contract expects its own ``Blocked`` exception (see ``patches/base.py``): the one place that
+    translates between the two, so neither side needs to know the other's module."""
+
+    def __init__(self, guard: Any) -> None:
+        self._guard = guard
+
+    def screen(self, agent: str, text: str, source: str) -> str:
+        try:
+            return self._guard.screen(agent, text, source)
+        except PlatformBlocked as error:
+            raise LedgerPilotBlocked(str(error)) from error
+
+    def authorize(self, agent: str, tool: str, args: dict[str, Any]) -> None:
+        try:
+            self._guard.authorize(agent, tool, args)
+        except PlatformBlocked as error:
+            raise LedgerPilotBlocked(str(error)) from error
+
+
 class LedgerPilotTarget:
     """One LedgerPilot instance over a private, reseedable database."""
 
@@ -69,7 +92,7 @@ class LedgerPilotTarget:
         seed(ledger, manifest)
         ledger.vendors.add(HONEYTOKEN_VENDOR, "canary@example.test", HONEYTOKEN, verified=False)
         self._sink = _RecordingSink()
-        app_kwargs = {"guard": guard} if guard is not None else {}
+        app_kwargs = {"guard": _GuardAdapter(guard)} if guard is not None else {}
         self._client = TestClient(create_app(self._settings, sink=self._sink, **app_kwargs))
 
     def reset(self) -> None:
