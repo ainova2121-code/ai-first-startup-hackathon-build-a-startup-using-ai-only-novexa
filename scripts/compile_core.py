@@ -13,6 +13,14 @@ Two steps, run separately because only the second needs a C toolchain:
 
 A real release then ships the compiled extensions and drops the ``.py`` files for these modules
 from the distributed artifact (see ``purpleteam/provenance.py`` for signing what does ship).
+
+``annotation_typing`` is off: Cython's pure-Python mode otherwise turns every PEP-484 hint into a
+runtime-enforced argument check, which this codebase's hints were never written for (plenty of
+code deliberately accepts an unexpected type just to validate it and raise its own, specific
+exception). Leaving annotation enforcement on changed real behaviour under compilation — an
+``expected: type`` parameter started rejecting ``cryptography``'s ABC-based key classes, and a
+``pinned_checkpoint: dict`` parameter started raising Cython's own ``TypeError`` before our code's
+``ValueError`` could run — caught by ``compile-core.yml``'s test run, not by translation alone.
 """
 
 from __future__ import annotations
@@ -21,6 +29,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+DIRECTIVES = {"language_level": "3", "annotation_typing": False}
 
 # The modules that carry real proprietary logic (detection, scoring, patch selection, the signed
 # audit trail). Integration surfaces a customer extends per target (discovery, adapters, target
@@ -59,7 +68,7 @@ def translate() -> list[str]:
     failed = []
     for module, source in zip(CORE_MODULES, sources):
         try:
-            cythonize([source], compiler_directives={"language_level": "3"}, quiet=True)
+            cythonize([source], compiler_directives=DIRECTIVES, quiet=True)
         except Exception as error:
             failed.append(f"{module}: {error}")
     return failed
@@ -73,7 +82,7 @@ def build() -> None:
 
     extensions = [Extension(module.removesuffix(".py").replace("/", "."), [str(ROOT / module)])
                  for module in CORE_MODULES]
-    dist = Distribution({"ext_modules": cythonize(extensions, compiler_directives={"language_level": "3"})})
+    dist = Distribution({"ext_modules": cythonize(extensions, compiler_directives=DIRECTIVES)})
     dist.script_args = ["build_ext", "--inplace"]
     dist.parse_command_line()
     dist.run_commands()
