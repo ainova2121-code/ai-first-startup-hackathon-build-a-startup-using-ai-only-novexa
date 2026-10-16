@@ -1,0 +1,12 @@
+This project's source code is licensed under the MIT License (see LICENSE).
+
+Third-party data included in this repository is NOT covered by the MIT License:
+
+- data/invoices/*.pdf and data/invoices/manifest.json
+  Real invoices from the FCC political public file, via the amazon/ConfBench dataset.
+  Licensed under Creative Commons Attribution-NonCommercial 4.0 (CC BY-NC 4.0).
+  Used here for non-commercial demonstration only. See data/README.md.
+  Source: https://huggingface.co/datasets/amazon/ConfBench
+
+The runtime depends on third-party tools under their own licenses, including
+Microsoft PyRIT and Protect AI LLM Guard.

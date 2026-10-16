@@ -1,0 +1,41 @@
+[project]
+name = "ledgerpilot"
+version = "0.1.0"
+description = "Mock agentic accounts-payable department used as a red-team target."
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "python-multipart>=0.0.9",
+    "pydantic-settings>=2.4",
+    "langchain>=1.0",
+    "langchain-openai>=1.0",
+    "langgraph>=1.0",
+    "pypdf>=5.0",
+    "fonttools>=4.50",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "httpx>=0.27",
+    "cython>=3.3.0",
+]
+# The purple-team platform (attacks the target). Kept separate so LedgerPilot stays lean.
+platform = ["pyrit>=1.1", "httpx>=0.27", "sqlglot>=25.0", "cryptography>=48.0", "rfc3161-client==1.0.9", "bandit>=1.7",
+           "llm-guard>=0.3"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["ledgerpilot"]
+
+[tool.uv]
+# The pip cache and the venv are on different drives here; hardlinking corrupts large
+# wheels (torch). Copy mode avoids it. Keep this when installing heavy deps like llm-guard.
+link-mode = "copy"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

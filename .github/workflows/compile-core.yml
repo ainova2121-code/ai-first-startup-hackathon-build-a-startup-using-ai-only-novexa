@@ -1,0 +1,34 @@
+# Builds the crown-jewel modules (scripts/compile_core.py) into real .so extensions on Linux —
+# the platform BYOC customers actually run on — and re-runs the test suite against the compiled
+# versions to prove behaviour is unchanged. Actions are pinned by commit SHA, not a mutable tag.
+name: Compile core
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "purpleteam/**"
+      - "scripts/compile_core.py"
+
+jobs:
+  compile-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - run: uv sync --group dev --group platform
+      - name: Translate (no compiler needed; catches real Cython incompatibilities fast)
+        run: uv run python scripts/compile_core.py --translate
+      - name: Build native extensions (gcc, preinstalled on this runner)
+        run: uv run python scripts/compile_core.py --build
+      - name: Confirm the compiled .so files, not the .py source, are what gets imported
+        run: |
+          uv run python -c "
+          import purpleteam.oracle as m
+          assert m.__file__.endswith('.so'), f'expected a compiled extension, got {m.__file__}'
+          print('compiled module loaded:', m.__file__)
+          "
+      - name: Re-run the test suite against the compiled modules
+        env:
+          LEDGERPILOT_LLM_API_KEY: ${{ secrets.LEDGERPILOT_LLM_API_KEY }}
+        run: uv run pytest -q

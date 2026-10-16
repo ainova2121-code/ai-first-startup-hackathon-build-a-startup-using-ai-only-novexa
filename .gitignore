@@ -141,3 +141,22 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# LedgerPilot runtime database
+data/*.db
+
+# uv.lock is committed on purpose: it pins every dependency by hash.
+.venv/
+.pytest_cache/
+__init__.py
+__pycache__/
+
+# Cython build artifacts (scripts/compile_core.py): generated .c files and the compiled
+# extensions themselves are never committed — only the .py source and the build script are.
+purpleteam/**/*.c
+purpleteam/**/*.so
+purpleteam/**/*.pyd
+purpleteam/**/*.html
+build/
+*.egg-info/
+

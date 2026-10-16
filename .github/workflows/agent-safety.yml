@@ -1,0 +1,29 @@
+# Agent-safety gate: re-runs the attack corpus and fails the build on a new breach.
+# Blocks merges; needs LEDGERPILOT_LLM_API_KEY set as a repo secret or this job fails.
+# Actions are pinned by commit SHA, not a mutable tag, so a compromised upstream tag can't
+# silently change what runs here; bump the SHA (and the version comment) deliberately to update.
+name: Agent safety
+
+on:
+  workflow_dispatch:
+  pull_request:
+
+jobs:
+  agent-safety:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+      - run: uv sync --group platform
+      - run: uv run python -m ledgerpilot.db.seed
+      # Cached (not committed) so repeated builds on main accumulate a trend; a cache miss just
+      # starts a fresh ledger — the gate's pass/fail never depends on this cache being present.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ci/agent-safety-ledger.jsonl
+          key: agent-safety-ledger-${{ github.ref_name }}
+          restore-keys: agent-safety-ledger-main
+      - name: Run agent-safety gate
+        env:
+          LEDGERPILOT_LLM_API_KEY: ${{ secrets.LEDGERPILOT_LLM_API_KEY }}
+        run: uv run python -m purpleteam.ci

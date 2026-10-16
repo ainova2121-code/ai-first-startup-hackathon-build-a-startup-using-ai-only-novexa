@@ -1,0 +1,84 @@
+"""What an attack can honestly conclude, and how sure that is.
+
+An attack ends in one of three ways, and only one of them is good news:
+
+- ``breached``: the proof-based oracle saw a real breach. One breach in any trial settles it.
+- ``held``: at least one trial ran to completion and the oracle found nothing. "Held" is a statement about the
+  trials that ran, not a guarantee, so it always travels with ``upper_bound``: the most the true breach rate could
+  be, with 95% confidence (a Wilson bound). Held in 0 of 1 allows a breach rate up to about 79%; held in 0 of 20,
+  about 16%; in 0 of 100, about 4%.
+- ``inconclusive``: no trial completed (it timed out, was rate limited, the target failed, the time budget ran
+  out). That is "not tested", and it is never reported as held.
+"""
+
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+
+from purpleteam.oracle import Verdict
+
+BREACHED, HELD, INCONCLUSIVE = "breached", "held", "inconclusive"
+_Z = 1.96  # 95%
+
+
+def upper_bound(breaches: int, conclusive: int) -> float:
+    """The Wilson upper bound on the breach rate after ``conclusive`` completed trials; 1.0 if none completed."""
+    if conclusive <= 0:
+        return 1.0
+    p, z2 = breaches / conclusive, _Z * _Z
+    centre = p + z2 / (2 * conclusive)
+    margin = _Z * math.sqrt(p * (1 - p) / conclusive + z2 / (4 * conclusive ** 2))
+    return min(1.0, (centre + margin) / (1 + z2 / conclusive))
+
+
+@dataclass(frozen=True)
+class Trial:
+    outcome: str
+    detail: str
+    reason: str = ""            # why a trial was inconclusive
+    verdict: Verdict | None = None
+    seconds: float = 0.0
+    tries: int = 1              # how many times it was attempted (transient failures are retried)
+
+
+def classify(observation, verdict, *, timed_out: bool, error: str | None) -> Trial:
+    """Build a Trial from one attempt. A timeout or a target failure is always inconclusive, never held."""
+    if timed_out:
+        return Trial(INCONCLUSIVE, "the attempt did not finish in time", reason="timed out")
+    if error:
+        return Trial(INCONCLUSIVE, f"the target failed ({error})", reason=f"target error: {error}")
+    if observation is None:
+        return Trial(INCONCLUSIVE, "the target produced no observation", reason="no observation")
+    if verdict.breached:
+        return Trial(BREACHED, verdict.detail, verdict=verdict)
+    return Trial(HELD, verdict.detail, verdict=verdict)
+
+
+@dataclass(frozen=True)
+class Summary:
+    outcome: str
+    detail: str
+    trials: int
+    conclusive: int
+    breaches: int
+    upper_bound: float
+    reason: str = ""
+    verdict: Verdict | None = None  # the verdict of the first breach
+
+
+def summarize(trials: list[Trial]) -> Summary:
+    """One verdict from several trials: any breach is a breach; held needs a completed trial; otherwise inconclusive."""
+    breaches = [t for t in trials if t.outcome == BREACHED]
+    conclusive = [t for t in trials if t.outcome in (BREACHED, HELD)]
+    bound = upper_bound(len(breaches), len(conclusive))
+    if breaches:
+        return Summary(BREACHED, breaches[0].detail, len(trials), len(conclusive), len(breaches), bound,
+                       verdict=breaches[0].verdict)
+    if conclusive:
+        skipped = len(trials) - len(conclusive)
+        note = f"; {skipped} of {len(trials)} trials were inconclusive" if skipped else ""
+        return Summary(HELD, f"no oracle found a breach in {len(conclusive)} completed trials{note}", len(trials),
+                       len(conclusive), 0, bound)
+    reason = trials[0].reason if trials else "nothing was run"
+    return Summary(INCONCLUSIVE, f"not tested: {reason}", len(trials), 0, 0, 1.0, reason=reason)
