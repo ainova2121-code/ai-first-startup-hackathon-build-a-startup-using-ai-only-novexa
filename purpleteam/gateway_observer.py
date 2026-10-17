@@ -80,7 +80,7 @@ class _Agent:
 
 
 class GatewayObserver:
-    def __init__(self) -> None:
+    def __init__(self, *, track_handoffs: bool = False, handoff_window: int = 200) -> None:
         self._lock = threading.Lock()
         self._agents: dict[str, _Agent] = {}
         self._calls: list[ToolCall] = []  # since the last drain
@@ -90,6 +90,12 @@ class GatewayObserver:
         self._called: set[tuple[str, str]] = set()
         self._timeline: list[ToolCall] = []  # every call seen, never drained: for readers that must not lose any
         self.errors: list[str] = []
+        # Off by default: this is the one place raw prompt/reply text is kept rather than hashed
+        # (see module docstring), so a live gateway never pays that cost unless an operator
+        # explicitly opts into handoff inference for an assessment window.
+        self._track_handoffs = track_handoffs
+        self._handoff_window = handoff_window
+        self._exchanges: list[tuple[str, str, str]] = []  # (agent, first_user, answer), bounded
 
     def observe(self, request: Any, response: Any = None, hint: str | None = None, dialect: Dialect = OPENAI,
                 identity: str | None = None, model: str | None = None) -> Observed:
@@ -112,6 +118,13 @@ class GatewayObserver:
         """All calls seen so far, oldest first, with the time each was first seen (``drain`` does not remove them)."""
         with self._lock:
             return list(self._timeline)
+
+    def exchanges_for_handoffs(self) -> list[tuple[str, str, str]]:
+        """(agent, first_user, answer) for recent exchanges — empty unless ``track_handoffs=True``.
+        Internal, for ``purpleteam.handoffs.infer_handoffs``: never serialize this raw text into a
+        report or profile (see the module docstring's "prompts are kept only as hashes" rule)."""
+        with self._lock:
+            return list(self._exchanges)
 
     def note(self, message: str) -> None:
         with self._lock:
@@ -161,6 +174,9 @@ class GatewayObserver:
         agent = self._agent_for(hint, exchange.system[:MAX_PROMPT], exchange.tools, identity, model)
         if agent is None:
             return Observed(exchange=exchange)
+        if self._track_handoffs:
+            self._exchanges.append((agent.name, exchange.first_user, exchange.answer))
+            del self._exchanges[:-self._handoff_window]  # bounded: oldest first, drop from the front
         for name, description, schema in exchange.tools:
             self._add_tool(agent, name, description, schema)
         conversation = hashlib.sha256(f"{agent.name}\x00{exchange.first_user}".encode()).hexdigest()

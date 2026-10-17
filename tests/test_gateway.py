@@ -46,6 +46,28 @@ def test_profile_comes_from_the_request_alone():
     assert profile.dangerous_tools == {"update_record"} and len(profile.agents) == 1
 
 
+def test_handoff_exchanges_are_not_kept_unless_explicitly_opted_in():
+    observer = GatewayObserver()  # track_handoffs defaults to False
+    observer.observe(_request(user="the user's own message"))
+    assert observer.exchanges_for_handoffs() == []
+
+
+def test_handoff_exchanges_are_kept_when_opted_in():
+    observer = GatewayObserver(track_handoffs=True)
+    observer.observe(_request(user="the user's own message"), {"choices": [{"message": {"content": "the reply"}}]},
+                     hint="intake")
+    assert observer.exchanges_for_handoffs() == [("intake", "the user's own message", "the reply")]
+
+
+def test_handoff_window_is_bounded(tmp_path):
+    observer = GatewayObserver(track_handoffs=True, handoff_window=3)
+    for i in range(5):
+        observer.observe(_request(user=f"message {i}"), hint=f"agent-{i}")
+    kept = observer.exchanges_for_handoffs()
+    assert len(kept) == 3
+    assert [e[1] for e in kept] == ["message 2", "message 3", "message 4"]  # oldest dropped first
+
+
 def test_an_agents_model_is_read_from_the_request_body_without_being_told_explicitly():
     observer = GatewayObserver()
     observer.observe(_request())  # _request() sets {"model": "m", ...}; no explicit model= argument given
