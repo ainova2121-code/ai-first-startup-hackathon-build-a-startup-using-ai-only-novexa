@@ -1,0 +1,40 @@
+# The LLM gateway, domain-agnostic: this image never bundles LedgerPilot (or any other target) —
+# see purpleteam/patches/base.py's docstring for why that boundary matters. It installs only the
+# "gateway" dependency group (purpleteam/sandbox.py's module docstring explains the project's
+# base [project.dependencies] still belong to LedgerPilot today; a known, separately-tracked gap).
+#
+# Build:  docker build -f Dockerfile.gateway -t purpleteam-gateway .
+# Run:    docker run --rm -p 8080:8080 \
+#           -e GATEWAY_OPENAI_URL=https://api.openai.com/v1 -e GATEWAY_OPENAI_KEY=sk-... \
+#           -e GATEWAY_REDACTOR_SECRET="$(openssl rand -hex 32)" \
+#           purpleteam-gateway
+
+FROM python:3.12-slim AS builder
+
+RUN pip install --no-cache-dir uv==0.12.3
+
+WORKDIR /build
+COPY pyproject.toml uv.lock ./
+# Dependencies only, in their own layer: a change to purpleteam's source never invalidates this
+# (and the project itself is never installed here — its wheel target packages LedgerPilot, which
+# this image does not and must not need).
+RUN uv sync --frozen --no-install-project --no-dev --group gateway
+
+COPY purpleteam ./purpleteam
+
+FROM python:3.12-slim AS runtime
+
+RUN useradd --create-home --shell /usr/sbin/nologin gateway
+WORKDIR /app
+COPY --from=builder /build/.venv /app/.venv
+COPY --from=builder /build/purpleteam /app/purpleteam
+
+ENV PATH="/app/.venv/bin:${PATH}" PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+USER gateway
+EXPOSE 8080
+# Liveness only (the port accepts connections, uvicorn is up) — every real route needs an auth
+# header, so checking for a specific HTTP status here would be checking auth behaviour, not health.
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s \
+    CMD python -c "import socket; socket.create_connection(('127.0.0.1', 8080), timeout=2).close()"
+
+CMD ["uvicorn", "--factory", "purpleteam.gateway_main:app", "--host", "0.0.0.0", "--port", "8080"]

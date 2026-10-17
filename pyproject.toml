@@ -24,6 +24,9 @@ dev = [
 # The purple-team platform (attacks the target). Kept separate so LedgerPilot stays lean.
 platform = ["pyrit>=1.1", "httpx>=0.27", "sqlglot>=25.0", "cryptography>=48.0", "rfc3161-client==1.0.9", "bandit>=1.7",
            "llm-guard>=0.3"]
+# The LLM gateway's own runtime: no pyrit/bandit (attack/SAST-time only, not needed by a standing
+# service). llm-guard is included because P2 (prompt-injection screening) is a real runtime guard.
+gateway = ["httpx>=0.27", "sqlglot>=25.0", "cryptography>=48.0", "rfc3161-client==1.0.9", "llm-guard>=0.3"]
 
 [build-system]
 requires = ["hatchling"]

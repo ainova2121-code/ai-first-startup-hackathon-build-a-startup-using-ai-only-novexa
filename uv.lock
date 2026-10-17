@@ -1910,6 +1910,13 @@ dev = [
     { name = "httpx" },
     { name = "pytest" },
 ]
+gateway = [
+    { name = "cryptography" },
+    { name = "httpx" },
+    { name = "llm-guard" },
+    { name = "rfc3161-client" },
+    { name = "sqlglot" },
+]
 platform = [
     { name = "bandit" },
     { name = "cryptography" },
@@ -1938,6 +1945,13 @@ dev = [
     { name = "cython", specifier = ">=3.3.0" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "pytest", specifier = ">=8.0" },
+]
+gateway = [
+    { name = "cryptography", specifier = ">=48.0" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "llm-guard", specifier = ">=0.3" },
+    { name = "rfc3161-client", specifier = "==1.0.9" },
+    { name = "sqlglot", specifier = ">=25.0" },
 ]
 platform = [
     { name = "bandit", specifier = ">=1.7" },
