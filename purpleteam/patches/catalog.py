@@ -14,6 +14,13 @@ FINDING_PATCHES: dict[str, list[str]] = {
     "prompt_leak": ["P2", "P9"],
     "egress_leak": ["P10", "P2"],
     "privilege_escalation": ["P11", "P2"],
+    # Structural identity findings (purpleteam.identity) the catalog can actually answer — see
+    # assessment._identity_findings. Every other identity finding kind (shared_credential,
+    # unauthenticated_agent, a prompt or model change...) has no sensible runtime guard and stays
+    # report-only: claiming a patch for those would assert a fix that does not exist.
+    "excess_privilege": ["P11"],
+    "undeclared_agent": ["P11"],
+    "unscoped_execution": ["P4"],
 }
 
 PATCH_SUMMARY: dict[str, str] = {
@@ -30,3 +37,9 @@ CATALOG_IDS = tuple(PATCH_SUMMARY)
 
 # Patches that screen text for the whole target; the rest are scoped to the tool that breached.
 GLOBAL_PATCHES = frozenset({"P2", "P9", "P10", "P11"})
+
+# Recommended but never counted as a coverage gap when absent: P5 only builds when the operator
+# supplies business-specific facts (which verified values are legitimate for an argument) that
+# cannot be inferred, unlike every other patch here, which either always builds or fails only for
+# a genuine environment reason (P2 with no ML backend available) worth flagging as a real gap.
+OPTIONAL_PATCHES = frozenset({"P5"})

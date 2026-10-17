@@ -201,8 +201,11 @@ def test_an_agent_used_beyond_its_permissions_is_found_blocked_verified_and_evid
         legit=[("Look up acme", lambda o: any(c.tool == "lookup_vendor" for c in o.tool_calls))], manifest=INTENDED)
     report = asyncio.run(assessment.run([attack]))
 
+    # the dynamically proven breach and the statically discovered identity finding that explains why
+    # it was possible both reach the defender now — previously only the proven breach did
     assert [(f.kind, f.tool, f.agent) for f in report.findings] == [
-        ("privilege_escalation", "update_vendor_bank", "vendor")]
+        ("privilege_escalation", "update_vendor_bank", "vendor"),
+        ("excess_privilege", "update_vendor_bank", "vendor")]
     assert "P11" in report.defense.patch_ids and report.verification.safe_to_ship and report.safe_to_ship
     assert [e["kind"] for e in ledger.events()] == ["identity", "attack", "breach", "patch", "verdict", "seal"]
     assert report.chain_ok

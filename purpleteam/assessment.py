@@ -18,7 +18,7 @@ from purpleteam.attack.corpus import AttackTemplate, CorpusResult, action_object
 from purpleteam.audit.compliance import evidence_report
 from purpleteam.audit.ledger import AuditLedger
 from purpleteam.defender.selector import Defender, Defense, Finding
-from purpleteam.patches.catalog import FINDING_PATCHES
+from purpleteam.patches.catalog import FINDING_PATCHES, OPTIONAL_PATCHES
 from purpleteam.discovery import TargetProfile
 from purpleteam.explainer import Explanation
 from purpleteam.focus import plan_focus
@@ -136,14 +136,15 @@ class Assessment:
         report = AssessmentReport(self._profile.name, results, scope=scope)
         self._check_identity(report)
         static = self._scan_repo(report)
+        identity_findings = _identity_findings(report.identity)
         self._assess_blast(report, results)
         if scope:  # the evidence says what was not tested, so a narrow run is never read as a clean bill
             self._ledger.append("attacker", "scope", scope)
         self._record_attacks(results)
 
         breaches = [r for r in results if r.breached]
-        if breaches or static:
-            self._defend_and_verify(report, breaches, static)
+        if breaches or static or identity_findings:
+            self._defend_and_verify(report, breaches, static, identity_findings)
         self._seal(report)
         return report
 
@@ -158,25 +159,32 @@ class Assessment:
         return [f.as_finding() for f in static]
 
     def _defend_and_verify(self, report: AssessmentReport, breaches: list[CorpusResult],
-                           static: list[Finding] = ()) -> None:
-        report.findings = _findings(breaches) + list(static)
+                           static: list[Finding] = (), identity_findings: list[Finding] = ()) -> None:
+        report.findings = _findings(breaches) + list(static) + list(identity_findings)
         report.defense = Defender(self._profile, self._facts).select_all(report.findings)
-        unpatched = sorted({f.kind for f in report.findings
-                            if not set(FINDING_PATCHES.get(f.kind, [])) & set(report.defense.patch_ids)})
+        applied = set(report.defense.patch_ids)
+        gaps = {kind: missing for kind in sorted({f.kind for f in report.findings})
+               if (missing := _missing_patches(kind, applied))}
         patch_event = {"patch_ids": report.defense.patch_ids, "patches": report.defense.applied,
                        "rationale": report.defense.rationale}
         if "P11" in report.defense.patch_ids:  # an inferred manifest only forbids what an agent does not already hold
             patch_event["manifest"] = "declared" if self._manifest is not None else "inferred"
-        if unpatched:
-            patch_event["unpatched"] = unpatched  # the catalog had nothing that actually got built for these findings
+        if gaps:
+            patch_event["unpatched"] = sorted(gaps)  # the kind
+            patch_event["unpatched_detail"] = gaps  # kind -> exactly which recommended patch ids did not apply
         self._ledger.append("defender", "patch", patch_event)
 
         payloads = [b.payload for b in breaches]  # the exact text that breached, disguise/placement included
         patched = self._factory(report.defense.guard)
         report.verification = verify(patched, self._oracle, attacks=payloads, legit=self._legit)
-        if unpatched:
+        if gaps:
             report.verification.errored = True
-            report.verification.errors.append(f"no patch was built for: {', '.join(unpatched)}")
+            report.verification.errors.extend(f"{kind}: {', '.join(missing)}" for kind, missing in gaps.items())
+        if report.defense.mode == "production" and not self._facts.get("approved"):
+            report.verification.errored = True
+            report.verification.errors.append(
+                "production-mode defense needs explicit human approval before it can ship "
+                "(set facts['approved']=True once reviewed)")
         self._ledger.append("verifier", "verdict", {
             **asdict(report.verification), "safe_to_ship": report.verification.safe_to_ship})
 
@@ -240,6 +248,38 @@ class Assessment:
             clause: {"description": entry["control"].description, "events": entry["events"]}
             for clause, entry in evidence_report(self._ledger.events()).items()
         }
+
+
+def _missing_patches(kind: str, applied: set[str]) -> list[str]:
+    """Catalog-recommended patch ids for ``kind`` that did not actually get applied — a patch that
+    silently failed to build (P2 with no ML backend available, say) is a real gap, not "patched
+    enough" just because something else for the same kind happened to succeed. A kind with no
+    catalog entry at all is reported the same way, via its own name as the one missing answer."""
+    recommended = FINDING_PATCHES.get(kind)
+    if recommended is None:
+        return ["no catalog entry"]
+    required = set(recommended) - OPTIONAL_PATCHES
+    return sorted(required - applied)
+
+
+_IDENTITY_PATCHABLE = {"excess_privilege", "undeclared_agent", "unscoped_execution"}
+
+
+def _identity_findings(identity: dict) -> list[Finding]:
+    """Structural identity findings the catalog can actually answer (excess_privilege,
+    undeclared_agent, unscoped_execution) feed into the same Defender pipeline a breach does —
+    previously only a *proven* privilege_escalation breach ever reached the defender, never a
+    *discovered* excess_privilege finding, even though P11 answers both equally well. Every other
+    identity finding kind (shared_credential, unauthenticated_agent, a prompt or model change...)
+    has no sensible runtime guard and stays report-only, exactly as before: claiming a patch for
+    those would assert a fix that does not exist."""
+    found = []
+    for f in identity.get("findings", []):
+        if f["kind"] not in _IDENTITY_PATCHABLE:
+            continue
+        for tool in (f["tools"] or [""]):
+            found.append(Finding(f["kind"], tool, f["agent"], f["detail"], source="static"))
+    return found
 
 
 def _findings(breaches: list[CorpusResult]) -> list[Finding]:

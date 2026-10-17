@@ -32,12 +32,15 @@ class Finding:
     source: str = "dynamic"  # dynamic (exploited against the running target) | static (found by reading its source)
 
 
+MODES = ("staging", "production")
+
+
 @dataclass
 class Defense:
     patch_ids: list[str]
     guard: CompositeGuard
     rationale: str
-    mode: str = "staging"  # staging = auto-apply; production = needs human approval
+    mode: str = "staging"  # staging = auto-apply; production = needs explicit human approval to ship
     applied: list[dict] = field(default_factory=list)  # {id, hash, summary} for the audit trail
 
 
@@ -47,6 +50,9 @@ class Defender:
     def __init__(self, profile: TargetProfile, facts: dict | None = None) -> None:
         self._profile = profile
         self._facts = facts or {}
+        self._mode = self._facts.get("mode", "staging")
+        if self._mode not in MODES:
+            raise ValueError(f"facts['mode'] must be one of {MODES}")
 
     def select(self, finding: Finding) -> Defense:
         ids = FINDING_PATCHES.get(finding.kind, [])
@@ -55,7 +61,8 @@ class Defender:
         applied = [{"id": pid, "hash": patch.code_hash(), "summary": PATCH_SUMMARY[pid]}
                    for pid, patch in built if patch is not None]
         rationale = f"{finding.kind} via {finding.tool}: applied {', '.join(p['id'] for p in applied)}"
-        return Defense([p["id"] for p in applied], CompositeGuard(patches), rationale, applied=applied)
+        return Defense([p["id"] for p in applied], CompositeGuard(patches), rationale,
+                       mode=self._mode, applied=applied)
 
     def select_all(self, findings: list[Finding]) -> Defense:
         """One defense for several findings; a patch is applied once per target or per tool."""
@@ -69,7 +76,7 @@ class Defender:
                 merged.setdefault((entry["id"], scope), (entry, patch))
         entries = [entry for entry, _ in merged.values()]
         guard = CompositeGuard([patch for _, patch in merged.values()])
-        return Defense([e["id"] for e in entries], guard, "; ".join(rationale), applied=entries)
+        return Defense([e["id"] for e in entries], guard, "; ".join(rationale), mode=self._mode, applied=entries)
 
     def _build(self, patch_id: str, finding: Finding) -> Patch | None:
         if patch_id == "P2":

@@ -130,4 +130,7 @@ def test_a_focus_with_nothing_to_run_attacks_nothing_instead_of_the_default_corp
     ledger = AuditLedger(tmp_path / "audit.jsonl")
     assessment = Assessment(lambda guard: _Leaky(), focus_oracle(PROFILE, [TOOL]), PROFILE, ledger, legit=[])
     report = asyncio.run(assessment.run(focus=[AGENT]))
-    assert report.results == [] and report.findings == [] and AGENT in report.scope["skipped"]
+    assert report.results == [] and AGENT in report.scope["skipped"]
+    # identity/posture findings are independent of the attack focus and still surface: PROFILE's
+    # "reports" agent genuinely has an unscoped-execution tool regardless of what was attacked
+    assert [(f.kind, f.source) for f in report.findings] == [("unscoped_execution", "static")]
