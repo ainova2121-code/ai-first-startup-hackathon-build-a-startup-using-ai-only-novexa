@@ -28,6 +28,24 @@ def test_gate_passes_when_all_held():
     assert gate.passed and gate.breaches == []
 
 
+def test_gate_fails_on_an_empty_run_instead_of_passing_vacuously():
+    gate = evaluate([], waived=set())
+    assert not gate.passed
+
+
+def test_gate_fails_when_an_attack_never_completed_even_with_no_breach():
+    inconclusive = CorpusResult("dan_1", "jailbreak", False, "not tested: timed out", outcome="inconclusive")
+    gate = evaluate([inconclusive, _result("aim", False)], waived=set())
+    assert not gate.passed
+    assert [r.id for r in gate.inconclusive] == ["dan_1"]
+
+
+def test_a_waived_inconclusive_attack_does_not_fail_the_gate():
+    inconclusive = CorpusResult("dan_1", "jailbreak", False, "not tested: timed out", outcome="inconclusive")
+    gate = evaluate([inconclusive, _result("aim", False)], waived={"dan_1"})
+    assert gate.passed
+
+
 def test_waiver_does_not_fail_the_gate():
     gate = evaluate([_result("dan_1", True)], waived={"dan_1"})
     assert gate.passed

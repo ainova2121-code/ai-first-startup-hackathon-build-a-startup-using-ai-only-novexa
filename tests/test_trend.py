@@ -62,9 +62,9 @@ def test_render_of_empty_history_is_empty():
 
 
 def test_an_unpatched_finding_is_named_in_the_render_notes(tmp_path, monkeypatch):
-    import purpleteam.assessment as assessment_module
+    import purpleteam.patches.catalog as catalog_module
 
-    monkeypatch.setitem(assessment_module.FINDING_PATCHES, "mystery_kind", ["P-does-not-exist"])
+    monkeypatch.setitem(catalog_module.FINDING_PATCHES, "mystery_kind", ["P-does-not-exist"])
 
     class _Mystery:
         name = "fake"

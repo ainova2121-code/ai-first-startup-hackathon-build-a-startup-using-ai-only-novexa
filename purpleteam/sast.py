@@ -25,11 +25,23 @@ from purpleteam.defender.selector import Finding
 
 _SCAN_TIMEOUT = 120
 
-# Bandit test ID -> the Finding kind the patch catalog already answers (purpleteam.patches.catalog).
-# Only mapped IDs are kept; an unmapped Bandit finding would have nowhere to route.
-BANDIT_KINDS = {"B608": "sql_injection"}
+# Bandit test ID -> the Finding kind this platform knows what to do with. Only mapped IDs are
+# kept; an unmapped Bandit finding would have nowhere to route. sql_injection has a runtime patch
+# (purpleteam.patches.catalog); hardcoded_secret and shell_injection do not — no guard can "un-hardcode"
+# a secret or make an already-built shell command safe to run, only a source change can, so these
+# two are codemod-only findings and are expected to surface as an unpatched gap at defend time
+# (see assessment._defend_and_verify) until a human reviews and applies the drafted fix.
+BANDIT_KINDS = {
+    "B608": "sql_injection",
+    "B105": "hardcoded_secret", "B106": "hardcoded_secret", "B107": "hardcoded_secret",
+    "B602": "shell_injection",
+}
 
 # SonarQube rule key -> the same Finding kinds, across the languages its default rule sets cover.
+# sql_injection only: the equivalent Python rule keys for hardcoded credentials and OS command
+# injection were not confirmed against SonarQube's own documentation, so they are deliberately
+# left unmapped rather than guessed — a wrong key would silently match nothing, which is worse
+# than an honest gap.
 SONARQUBE_KINDS = {"python:S2077": "sql_injection", "java:S2077": "sql_injection", "js:S2077": "sql_injection"}
 
 

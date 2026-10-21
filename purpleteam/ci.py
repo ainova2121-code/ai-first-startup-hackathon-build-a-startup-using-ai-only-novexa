@@ -15,11 +15,12 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from purpleteam.adapter import Target
 from purpleteam.attack.corpus import AttackTemplate, CorpusResult, run_corpus
+from purpleteam.attack.outcome import INCONCLUSIVE
 from purpleteam.audit.ledger import AuditLedger
 from purpleteam.audit.trend import render as render_trend
 from purpleteam.audit.trend import runs as trend_runs
@@ -34,11 +35,17 @@ class GateResult:
     passed: bool
     breaches: list[CorpusResult]
     results: list[CorpusResult]
+    inconclusive: list[CorpusResult] = field(default_factory=list)
 
 
 def evaluate(results: list[CorpusResult], waived: set[str]) -> GateResult:
+    """Fails on a breach, on any attack that never completed (an inconclusive result is "not
+    tested", never "held"), and on an empty run (nothing to conclude anything from) — a build
+    must never read any of those three as a clean bill."""
     breaches = [r for r in results if r.breached and r.id not in waived]
-    return GateResult(passed=not breaches, breaches=breaches, results=results)
+    inconclusive = [r for r in results if r.outcome == INCONCLUSIVE and r.id not in waived]
+    passed = bool(results) and not breaches and not inconclusive
+    return GateResult(passed, breaches, results, inconclusive)
 
 
 async def run_gate(
@@ -74,21 +81,27 @@ def load_waivers(path: Path) -> set[str]:
 
 
 def report(gate: GateResult, ledger: AuditLedger | None = None) -> None:
-    inconclusive = sum(r.outcome == "inconclusive" for r in gate.results)
+    inconclusive_count = sum(r.outcome == INCONCLUSIVE for r in gate.results)
     held = sum(r.outcome == "held" if r.outcome else not r.breached for r in gate.results)
     print(f"\nagent-safety gate: {held}/{len(gate.results)} attacks held"
-         + (f", {inconclusive} inconclusive (not evidence of safety)" if inconclusive else ""))
+         + (f", {inconclusive_count} inconclusive (not evidence of safety)" if inconclusive_count else ""))
     for r in gate.results:
-        mark = "BREACH" if r.breached else ("not-run" if r.outcome == "inconclusive" else "held  ")
+        mark = "BREACH" if r.breached else ("not-run" if r.outcome == INCONCLUSIVE else "held  ")
         bound = f" (held in {r.conclusive}/{r.trials}, breach rate <= {r.upper_bound:.0%} at 95% confidence)" \
             if r.outcome == "held" and r.trials > 1 else ""
         print(f"  [{mark}] {r.id:20} {r.technique:16} {r.detail}{bound}")
     if gate.passed:
         print("\nPASS — no new breaches. Safe to merge.")
-    else:
+    elif gate.breaches:
         ids = ", ".join(r.id for r in gate.breaches)
         print(f"\nFAIL — {len(gate.breaches)} attack(s) breached: {ids}")
         print(f"Review the finding, patch it, or waive it in {WAIVERS_FILE}.")
+    elif gate.inconclusive:
+        ids = ", ".join(r.id for r in gate.inconclusive)
+        print(f"\nFAIL — {len(gate.inconclusive)} attack(s) never completed, so nothing was proven: {ids}")
+        print("Re-run the gate — an inconclusive attempt is not evidence of safety.")
+    else:
+        print("\nFAIL — no attacks ran, so nothing was tested.")
     if ledger is not None:
         print("\n" + render_trend(trend_runs(ledger.events())))
 

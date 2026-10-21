@@ -59,9 +59,9 @@ def test_a_breach_reachable_only_through_disguise_is_still_verified_against_its_
 
 
 def test_a_finding_kind_the_catalog_has_no_patch_for_is_reported_as_an_error_not_shipped(tmp_path, monkeypatch):
-    import purpleteam.assessment as assessment_module
+    import purpleteam.patches.catalog as catalog_module
 
-    monkeypatch.setitem(assessment_module.FINDING_PATCHES, "mystery_kind", ["P-does-not-exist"])
+    monkeypatch.setitem(catalog_module.FINDING_PATCHES, "mystery_kind", ["P-does-not-exist"])
 
     class _Mystery:
         name = "fake"

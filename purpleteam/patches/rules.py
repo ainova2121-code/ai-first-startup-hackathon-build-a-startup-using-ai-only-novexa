@@ -111,5 +111,6 @@ class AgentScopeGuard(Patch):
         self._manifest = manifest
 
     def authorize(self, agent: str, tool: str, args: dict[str, Any]) -> None:
-        if not self._manifest.permits(agent, tool):
-            raise Blocked(f"agent '{agent}' is not permitted to call {tool}")
+        reason = self._manifest.reason_denied(agent, tool, args)
+        if reason is not None:
+            raise Blocked(reason)

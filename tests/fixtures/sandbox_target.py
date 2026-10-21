@@ -32,3 +32,12 @@ def noisy() -> TargetProfile:
 
 def reads_env() -> TargetProfile:
     return TargetProfile(os.environ.get("SANDBOX_TEST_SECRET", "<not set>"), [])
+
+
+def floods() -> TargetProfile:
+    """Writes directly to the OS file descriptor, bypassing ``sys.stdout`` (and so the worker's
+    own ``redirect_stdout``) entirely — the one way a target can still reach the parent's real
+    pipe, which is exactly what the output cap in ``purpleteam.sandbox`` must catch."""
+    chunk = b"x" * 65_536
+    while True:
+        os.write(1, chunk)

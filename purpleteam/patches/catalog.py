@@ -43,3 +43,15 @@ GLOBAL_PATCHES = frozenset({"P2", "P9", "P10", "P11"})
 # cannot be inferred, unlike every other patch here, which either always builds or fails only for
 # a genuine environment reason (P2 with no ML backend available) worth flagging as a real gap.
 OPTIONAL_PATCHES = frozenset({"P5"})
+
+
+def missing_patches(kind: str, applied: set[str]) -> list[str]:
+    """Catalog-recommended patch ids for ``kind`` that did not actually get applied — a patch that
+    silently failed to build (P2 with no ML backend available, say) is a real gap, not "patched
+    enough" just because something else for the same kind happened to succeed. A kind with no
+    catalog entry at all is reported the same way, via its own name as the one missing answer."""
+    recommended = FINDING_PATCHES.get(kind)
+    if recommended is None:
+        return ["no catalog entry"]
+    required = set(recommended) - OPTIONAL_PATCHES
+    return sorted(required - applied)

@@ -24,12 +24,14 @@ import json
 import os
 import subprocess
 import sys
+import threading
 
 from purpleteam.capture import DiscoveryError
 from purpleteam.discovery import AgentInfo, DiscoveredTool, TargetProfile
 
 DEFAULT_TIMEOUT = 60.0
 MAX_OUTPUT = 10_000_000  # a malicious target's unbounded stdout must not be parsed or held onto whole
+_CHUNK = 65_536
 # The platform's own secrets (API keys, signing material) live in this process's environment; the
 # child gets only what a Python interpreter needs to start, plus whatever the caller opts in via env=.
 _SAFE_ENV_KEYS = ("PATH", "SYSTEMROOT", "SYSTEMDRIVE", "TEMP", "TMP", "PYTHONPATH", "VIRTUAL_ENV")
@@ -38,6 +40,54 @@ _SAFE_ENV_KEYS = ("PATH", "SYSTEMROOT", "SYSTEMDRIVE", "TEMP", "TMP", "PYTHONPAT
 def _child_env(extra: dict[str, str] | None) -> dict[str, str]:
     base = {k: v for k, v in os.environ.items() if k in _SAFE_ENV_KEYS}
     return {**base, **(extra or {})}
+
+
+class _OutputExceeded(Exception):
+    """A pipe passed ``max_output`` bytes; raised from the main thread, not the reader thread,
+    so it is never silently swallowed by a background thread nobody is watching."""
+
+
+def _drain(stream, sink: list[str], cap: int, exceeded: threading.Event, kill) -> None:
+    total = 0
+    while True:
+        chunk = stream.read(_CHUNK)
+        if not chunk:
+            return
+        total += len(chunk)
+        if total > cap:
+            exceeded.set()
+            try:
+                kill()  # stop the flood at the source instead of reading it forever
+            except OSError:
+                pass  # the other stream's reader (or the process itself exiting) already did
+            return
+        sink.append(chunk)
+
+
+def _run_capped(args: list[str], *, env: dict[str, str], timeout: float, max_output: int) -> tuple[str, str]:
+    """Like ``subprocess.run(capture_output=True)``, but each pipe is read incrementally and the
+    output cap is enforced as bytes arrive — a flood is cut off and the child killed mid-write,
+    never buffered whole in this process's memory before being checked."""
+    proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, text=True)
+    exceeded = threading.Event()
+    out: list[str] = []
+    err: list[str] = []
+    readers = [threading.Thread(target=_drain, args=(proc.stdout, out, max_output, exceeded, proc.kill)),
+              threading.Thread(target=_drain, args=(proc.stderr, err, max_output, exceeded, proc.kill))]
+    for reader in readers:
+        reader.start()
+    try:
+        proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        raise
+    finally:
+        for reader in readers:
+            reader.join(timeout=timeout + 5)
+    if exceeded.is_set():
+        raise _OutputExceeded()
+    return "".join(out), "".join(err)
 
 
 def discover_sandboxed(target_ref: str, *, mode: str = "runtime", timeout: float = DEFAULT_TIMEOUT,
@@ -51,21 +101,21 @@ def discover_sandboxed(target_ref: str, *, mode: str = "runtime", timeout: float
     if mode not in ("runtime", "static"):
         raise ValueError("mode must be 'runtime' or 'static'")
     try:
-        result = subprocess.run(
+        stdout, stderr = _run_capped(
             [sys.executable, "-m", "purpleteam.sandbox_worker", mode, target_ref],
-            capture_output=True, timeout=timeout, env=_child_env(env), text=True)
+            env=_child_env(env), timeout=timeout, max_output=MAX_OUTPUT)
     except subprocess.TimeoutExpired as error:
         raise DiscoveryError(f"discovery of {target_ref!r} did not finish within {timeout:.0f}s "
                              "(sandboxed)") from error
-    if len(result.stdout) > MAX_OUTPUT:
+    except _OutputExceeded:
         raise DiscoveryError(f"discovery of {target_ref!r} produced more output than this will trust "
-                             "(sandboxed)")
+                             "(sandboxed)") from None
     try:
-        data = json.loads(result.stdout) if result.stdout.strip() else None
+        data = json.loads(stdout) if stdout.strip() else None
     except ValueError:
         data = None
     if not isinstance(data, dict) or ("profile" not in data and "error" not in data):
-        detail = (result.stderr or "no readable output from the sandboxed process")[:2000]
+        detail = (stderr or "no readable output from the sandboxed process")[:2000]
         raise DiscoveryError(f"discovery of {target_ref!r} failed in the sandbox: {detail}")
     if "error" in data:
         raise DiscoveryError(f"discovery of {target_ref!r} failed: {data['error']}")

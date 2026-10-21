@@ -2,6 +2,7 @@
 failure, a hang, noisy stdout, and the platform's own environment are all proven isolated."""
 
 import os
+import time
 from pathlib import Path
 
 import pytest
@@ -67,6 +68,22 @@ def test_this_processs_environment_is_not_visible_to_the_sandboxed_target():
 def test_an_explicitly_opted_in_env_var_does_reach_the_target():
     profile = _discover(f"{RUNTIME}:reads_env", env={"SANDBOX_TEST_SECRET": "opted-in"})
     assert profile.name == "opted-in"
+
+
+def test_a_flooding_target_is_cut_off_and_reported_as_too_much_output():
+    """``floods`` writes directly to fd 1, bypassing the worker's ``redirect_stdout`` — the one
+    way a target can still reach the parent's real pipe."""
+    with pytest.raises(DiscoveryError, match="more output than this will trust"):
+        _discover(f"{RUNTIME}:floods", timeout=30)
+
+
+def test_the_flood_is_cut_off_live_not_buffered_until_the_timeout():
+    """The cap must be enforced as bytes arrive, not checked only after the subprocess exits —
+    an unbounded flood never naturally exits, so a post-hoc check would never even run."""
+    start = time.monotonic()
+    with pytest.raises(DiscoveryError, match="more output than this will trust"):
+        _discover(f"{RUNTIME}:floods", timeout=30)
+    assert time.monotonic() - start < 15  # cut off well inside the 30s timeout
 
 
 def test_an_unknown_mode_is_rejected_before_spawning_anything():
