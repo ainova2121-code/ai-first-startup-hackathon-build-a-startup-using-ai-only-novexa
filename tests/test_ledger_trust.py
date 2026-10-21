@@ -85,6 +85,32 @@ def test_revoked_keys_are_rejected_from_the_revocation_point(tmp_path):
     assert not verify_log(ledger.events(), {"keys": keys, "revoked": {old_kid: True}}).ok
 
 
+def test_export_trust_carries_a_real_revocation_through_to_verify_log(tmp_path):
+    """The production path, not a hand-rolled trust dict: keyring.revoke() alone is enough for a
+    freshly exported trust bundle to reject what it protects against."""
+    keyring = AgentKeyring()
+    ledger = AuditLedger(tmp_path / "audit.jsonl", keyring=keyring)
+    ledger.append("attacker", "attack", {"n": 0})
+    old_kid = keyring.kid("attacker")
+    keyring.rotate("attacker")
+    ledger.append("attacker", "attack", {"n": 1})
+
+    keyring.revoke("attacker", old_kid, as_of_seq=1)
+    trust = ledger.export_trust()
+
+    assert trust["revoked"] == {old_kid: 1}
+    assert verify_log(ledger.events(), trust).ok  # the revoked key's own events are all before seq 1
+
+    keyring.revoke("attacker", old_kid, as_of_seq=0)
+    result = verify_log(ledger.events(), ledger.export_trust())
+    assert not result.ok and result.broken_at == 0 and "revoked" in result.reason
+
+
+def test_export_trust_omits_the_revoked_field_when_nothing_is_revoked(tmp_path):
+    ledger = make_ledger(tmp_path / "audit.jsonl")
+    assert "revoked" not in ledger.export_trust()
+
+
 def test_a_revoked_checkpoint_key_voids_later_checkpoints(tmp_path):
     ledger = make_ledger(tmp_path / "audit.jsonl")
     trust = ledger.export_trust()

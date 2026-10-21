@@ -30,7 +30,10 @@ _MISSING_KEY = (0x80090016, 0x8009000D)  # NTE_BAD_KEYSET, NTE_NO_KEY
 
 
 def _library() -> ctypes.WinDLL:
-    lib = ctypes.WinDLL("ncrypt")
+    try:
+        lib = ctypes.WinDLL("ncrypt")
+    except OSError as error:  # the DLL itself could not load: genuinely unavailable, not a misconfigured TPM
+        raise SignerUnavailable(f"the Windows crypto library (ncrypt.dll) could not be loaded: {error}") from None
     handle, pointer, dword, text = ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p), wintypes.DWORD, wintypes.LPCWSTR
     size = ctypes.POINTER(wintypes.DWORD)
     signatures = {

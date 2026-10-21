@@ -163,6 +163,9 @@ class AuditLedger:
         trust = {"keys": self._keyring.public_keys(), "checkpoint": checkpoint}
         if self._hardware is not None:
             trust["hardware"] = self._hardware_trust_own()
+        revoked = self._keyring.revoked()
+        if revoked:
+            trust["revoked"] = revoked
         return trust
 
     def _hardware_trust_own(self) -> dict:

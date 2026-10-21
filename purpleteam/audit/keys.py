@@ -24,6 +24,7 @@ signer plugs in. Public keys are exportable for offline verification; private ke
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import re
 from dataclasses import dataclass
@@ -98,9 +99,11 @@ class AgentKeyring:
         self._dir = Path(directory) if directory is not None else None
         self._passphrase = passphrase
         self._generations: dict[str, list[_Pair]] = {}  # oldest first; last is current
+        self._revoked: dict[str, int] = {}  # kid -> first sequence number no longer trusted under it
         if self._dir is not None:
             self._dir.mkdir(parents=True, exist_ok=True)
             self._load()
+            self._load_revoked()
 
     def kid(self, actor: str) -> str:
         return self._current(actor).kid
@@ -118,8 +121,32 @@ class AgentKeyring:
         self._add(actor, pair)
         return pair.kid
 
+    def revoke(self, actor: str, kid: str, as_of_seq: int = 0) -> None:
+        """Mark ``kid`` compromised: a verifier given this keyring's trust bundle (``revoked()``,
+        folded into ``AuditLedger.export_trust()``) rejects any ledger signature under it from
+        ``as_of_seq`` onward (``purpleteam.audit.verify``). Signatures it already made before that
+        point stay verifiable — revocation protects what the key signs next, not history it
+        already signed honestly. This keyring also refuses to sign anything new with a revoked
+        key, in this process and after a restart, in case the leak is ours to stop rather than
+        only a third party's to detect."""
+        self._check(actor)
+        if not any(pair.kid == kid for pair in self._generations.get(actor, [])):
+            raise ValueError("this actor has no key with that id")
+        if as_of_seq < 0:
+            raise ValueError("as_of_seq must not be negative")
+        self._revoked[kid] = as_of_seq
+        if self._dir is not None:
+            self._save_revoked()
+
+    def revoked(self) -> dict[str, int]:
+        """{kid: first_untrusted_seq} for every revoked key, across every actor — the shape
+        ``purpleteam.audit.verify``'s ``trust["revoked"]`` expects."""
+        return dict(self._revoked)
+
     def public_keys(self) -> dict[str, dict[str, PublicKey]]:
-        """actor -> {kid: public key} for every generation, for pinning and offline checks."""
+        """actor -> {kid: public key} for every generation, for pinning and offline checks.
+        Revoked keys stay included: history they signed honestly must still verify (``revoked()``
+        is what tells a verifier where that trust ends, not this)."""
         return {actor: {pair.kid: pair.public for pair in pairs} for actor, pairs in self._generations.items()}
 
     def _new_pair(self) -> _Pair:
@@ -131,12 +158,15 @@ class AgentKeyring:
     def _current(self, actor: str) -> _Pair:
         self._check(actor)
         pairs = self._generations.get(actor)
-        if not pairs or (self._pq and pairs[-1].pq is None):  # never sign classically from a post-quantum keyring
+        # never sign classically from a post-quantum keyring, and never sign with a revoked key
+        if not pairs or (self._pq and pairs[-1].pq is None) or pairs[-1].kid in self._revoked:
             self._add(actor, self._new_pair())
         return self._generations[actor][-1]
 
     def _generation(self, actor: str, kid: str) -> _Pair:
         self._check(actor)
+        if kid in self._revoked:
+            raise ValueError("this key has been revoked and can no longer sign")
         for pair in self._generations.get(actor, []):
             if pair.kid == kid:
                 if self._pq and pair.pq is None:
@@ -195,6 +225,22 @@ class AgentKeyring:
                 raise ValueError(f"classical-only key in a post-quantum key directory (renamed, or created before "
                                  f"post-quantum keys; see allow_classical_history): {path.name}")
             self._generations.setdefault(actor, []).append(pair)
+
+    def _load_revoked(self) -> None:
+        path = self._dir / "revoked.json"
+        if not path.exists():
+            return
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or not all(
+                isinstance(kid, str) and isinstance(seq, int) and seq >= 0 for kid, seq in data.items()):
+            raise ValueError(f"the revocation record at {path} does not hold the expected object")
+        self._revoked = data
+
+    def _save_revoked(self) -> None:
+        path = self._dir / "revoked.json"
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(self._revoked, indent=2), encoding="utf-8")
+        os.replace(tmp, path)
 
 
 def verify_signature(public_hex: str, data: bytes, signature_hex: str) -> bool:

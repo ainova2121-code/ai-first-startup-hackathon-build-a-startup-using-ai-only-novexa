@@ -13,7 +13,16 @@ of scope for this project; formatting plain text well enough to hand to a person
 
 from __future__ import annotations
 
+from purpleteam.adapter import OBSERVED, PROPOSED, REPORTED
 from purpleteam.identity import DRIFT_KINDS, SCOPE_KINDS
+
+# A dynamic finding's evidence level, spelled out for a reader who must not mistake "the model was
+# willing to do this" for "this action actually executed" — the two are different claims.
+_EVIDENCE_NOTE = {
+    PROPOSED: "the model's answer proposed this call; nothing confirms it was ever executed",
+    REPORTED: "the target reported a result for this call, so it says the call ran",
+    OBSERVED: "this call was observed running",
+}
 
 ANCHORED_NOTE = (
     "This checkpoint is also anchored to one or more outside timestamp authorities (RFC 3161), proving the "
@@ -117,6 +126,8 @@ def _findings(report) -> str:
         else:
             rows.append(f"### {finding.kind} — `{finding.tool}` ({finding.agent or 'unknown agent'})")
         rows.append(finding.detail)
+        if finding.source != "static" and finding.evidence in _EVIDENCE_NOTE:
+            rows.append(f"- **Evidence level:** {_EVIDENCE_NOTE[finding.evidence]}")
         if finding.signals:
             named = ", ".join(sorted({f"{s.scorer} ({s.pattern})" for s in finding.signals}))
             rows.append(f"- **Additional pattern evidence:** {named}")
@@ -166,6 +177,8 @@ def _limits(report) -> str:
                      (f", agent `{report.scope['agent']}`" if report.scope.get("agent") else ""))
         for topic, reason in (report.scope.get("skipped") or {}).items():
             notes.append(f"- **Not tested** ({topic}): {reason}")
+        if report.scope.get("not_run"):
+            notes.append(f"- **Not run:** {report.scope['not_run']}")
     for assumption in (report.blast.get("assumptions") or []):
         notes.append(f"- Blast-radius assumption: {assumption}")
     if report.verification and report.verification.errored:

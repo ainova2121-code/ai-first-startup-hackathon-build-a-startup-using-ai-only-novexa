@@ -171,6 +171,52 @@ def test_signing_uses_the_generation_named_by_the_key_id():
         keyring.sign("../a", b"x", EVENT_CONTEXT)
 
 
+def test_revoking_the_current_key_rotates_to_a_fresh_one_on_next_use():
+    keyring = AgentKeyring()
+    old = keyring.kid("a")
+
+    keyring.revoke("a", old, as_of_seq=3)
+
+    assert keyring.revoked() == {old: 3}
+    assert keyring.kid("a") != old  # _current auto-rotated past the revoked generation
+
+
+def test_a_revoked_key_refuses_to_sign_even_when_named_by_kid():
+    keyring = AgentKeyring()
+    old = keyring.kid("a")
+    keyring.rotate("a")
+
+    keyring.revoke("a", old)
+
+    with pytest.raises(ValueError, match="revoked"):
+        keyring.sign("a", b"x", EVENT_CONTEXT, kid=old)
+
+
+def test_revoke_validates_the_actor_owns_that_key_id_and_a_sane_sequence():
+    keyring = AgentKeyring()
+    kid = keyring.kid("a")
+    keyring.kid("b")  # a second actor, so "wrong actor" has something real to fail against
+
+    with pytest.raises(ValueError):
+        keyring.revoke("b", kid)
+    with pytest.raises(ValueError):
+        keyring.revoke("a", kid, as_of_seq=-1)
+    with pytest.raises(ValueError):
+        keyring.revoke("a", "0" * 16)  # no such key at all
+
+
+def test_revocations_persist_and_still_block_signing_after_a_restart(tmp_path):
+    keyring = AgentKeyring(tmp_path, b"pw")
+    kid = keyring.kid("a")
+    keyring.rotate("a")
+    keyring.revoke("a", kid, as_of_seq=5)
+
+    reopened = AgentKeyring(tmp_path, b"pw")
+    assert reopened.revoked() == {kid: 5}
+    with pytest.raises(ValueError, match="revoked"):
+        reopened.sign("a", b"x", EVENT_CONTEXT, kid=kid)
+
+
 @pytest.mark.parametrize("damage", ["missing-pq", "extra-field", "short-pq", "uppercase", "wrong-kid", "not-a-key"])
 def test_malformed_hybrid_entries_in_a_trust_bundle_are_rejected(tmp_path, damage):
     ledger = make_ledger(tmp_path / "a.jsonl", events=2)

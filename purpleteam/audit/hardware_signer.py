@@ -5,6 +5,14 @@ later) and signs on request. P-256 is what TPMs and Secure Enclaves implement; t
 ML-DSA, so a hardware signature is an *additional* component next to the ledger's software hybrid, never a
 replacement for it. Because the key cannot be copied, a signature proves the signing happened on that machine.
 
+A signer here is only ever asked to sign a *checkpoint* (``audit.ledger.AuditLedger.checkpoint``), never an
+individual event: a hardware round trip (tens to hundreds of milliseconds) on every event would make the
+gateway's request path far too slow, so every event instead gets the fast software hybrid signature, and the
+hardware key signs only the periodic summary. This is a difference in signing *cadence*, not in what is
+protected — a checkpoint signs the Merkle root of every event up to its size, so a single altered bit in any
+one of those events changes its hash, changes the root, and breaks the checkpoint's signature. A hardware
+signature on the checkpoint therefore still vouches for every event under it, just less often than per event.
+
 Every signature is made over ``signed_message(context, data)``, a length-prefixed, domain-separated message,
 so a signature made for one purpose (a checkpoint) can never pass for another (an event). Signatures are the
 raw 64-byte ``r || s`` that TPMs return. ``verify_p256`` needs no hardware and never raises, so an auditor
