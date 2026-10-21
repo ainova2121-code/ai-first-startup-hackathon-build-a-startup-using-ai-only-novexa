@@ -23,12 +23,18 @@ class CodemodCandidate:
 @dataclass(frozen=True)
 class VerifiedCodemod:
     """A candidate proven, by re-running the original scanner on a scratch copy, to actually
-    resolve the finding without introducing a new one or breaking the file's syntax."""
+    resolve the finding without introducing a new one or breaking the file's syntax.
+
+    ``verified_by`` names every check that actually passed: always ``"rescan"`` (the scanner that
+    found it, re-run), plus ``"invariant"`` when an independent, differently-implemented check of
+    the same property (``codemods.invariants``) also passed. A rescan alone is real but narrower
+    evidence than it looks — this makes which kind a reader is getting explicit rather than implied."""
 
     kind: str
     original: str
     replacement: str
     explanation: str
+    verified_by: tuple[str, ...] = ("rescan",)
 
 
 class VerificationFailed(Exception):

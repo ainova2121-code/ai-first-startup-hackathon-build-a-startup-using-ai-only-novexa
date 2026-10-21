@@ -36,7 +36,9 @@ class CodemodCatalog:
         path = self._path(key)
         if not path.exists():
             return None
-        return VerifiedCodemod(**json.loads(path.read_text(encoding="utf-8")))
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["verified_by"] = tuple(data.get("verified_by", ("rescan",)))  # JSON has no tuple type
+        return VerifiedCodemod(**data)
 
     def approve(self, key: str, codemod: VerifiedCodemod) -> None:
         """A human has reviewed this proven candidate; it becomes a permanent, reusable entry."""

@@ -12,14 +12,17 @@ import tempfile
 from pathlib import Path
 
 from purpleteam.codemods.base import CodemodCandidate, VerificationFailed, VerifiedCodemod
+from purpleteam.codemods.invariants import INVARIANTS
 from purpleteam.sast import Scanner, StaticFinding
 
 
 def verify(candidate: CodemodCandidate, finding: StaticFinding, file_path: Path, scanner: Scanner) -> VerifiedCodemod:
     """Raises VerificationFailed (never returns a half-checked result) unless: the patched file
-    still parses, the original finding is gone, and the fix introduced no new finding of its own
+    still parses, the original finding is gone, the fix introduced no new finding of its own
     (compared against the *original*, unpatched file's own findings — a pre-existing, unrelated
-    issue elsewhere in the file must never be blamed on this fix)."""
+    issue elsewhere in the file must never be blamed on this fix), and — when one exists for this
+    kind (``codemods.invariants``) — an independent, differently-implemented check of the same
+    property also passes; a clean re-scan alone is never presented as more than it is."""
     original_text = file_path.read_text(encoding="utf-8")
     if candidate.original not in original_text:
         raise VerificationFailed("the original line(s) no longer match the file; stale finding")
@@ -36,7 +39,16 @@ def verify(candidate: CodemodCandidate, finding: StaticFinding, file_path: Path,
     introduced = {f.kind for f in after} - {f.kind for f in before}
     if introduced:
         raise VerificationFailed(f"the fix introduced new finding kind(s): {', '.join(sorted(introduced))}")
-    return VerifiedCodemod(finding.kind, candidate.original, candidate.replacement, candidate.explanation)
+
+    verified_by = ["rescan"]
+    checker = INVARIANTS.get(finding.kind)
+    if checker is not None:
+        problem = checker(patched_text)
+        if problem is not None:
+            raise VerificationFailed(f"independent security invariant failed: {problem}")
+        verified_by.append("invariant")
+    return VerifiedCodemod(finding.kind, candidate.original, candidate.replacement, candidate.explanation,
+                           verified_by=tuple(verified_by))
 
 
 def _scan_text(scanner: Scanner, filename: str, text: str) -> list[StaticFinding]:

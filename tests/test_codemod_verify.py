@@ -83,3 +83,32 @@ def test_a_candidate_that_does_not_parse_fails_before_any_scan(tmp_path):
     candidate = CodemodCandidate("sql_injection", ORIGINAL, "cursor.execute(f'SELECT * FROM t WHERE id={x}", "broken")
     with pytest.raises(VerificationFailed, match="does not parse"):
         verify(candidate, FINDING, path, scanner)
+
+
+def test_a_clean_sql_fix_is_verified_by_both_the_rescan_and_the_independent_invariant(tmp_path):
+    path = _file(tmp_path, ORIGINAL)
+    scanner = _ScriptedScanner({ORIGINAL: [("sql_injection", 1)], FIXED: []})
+    candidate = CodemodCandidate("sql_injection", ORIGINAL, FIXED, "parameterized")
+    verified = verify(candidate, FINDING, path, scanner)
+    assert verified.verified_by == ("rescan", "invariant")
+
+
+def test_a_fix_the_scanner_wrongly_calls_clean_is_still_caught_by_the_independent_invariant(tmp_path):
+    """The whole point of an independent check: even a scanner that misses the real problem (or
+    was fooled) must not be the only thing standing between a candidate and being shown as proven."""
+    still_dynamic = "cursor.execute(f'SELECT * FROM t WHERE id={x}' + '')"
+    path = _file(tmp_path, ORIGINAL)
+    scanner = _ScriptedScanner({ORIGINAL: [("sql_injection", 1)], still_dynamic: []})  # the scanner is wrong here
+    candidate = CodemodCandidate("sql_injection", ORIGINAL, still_dynamic, "did not actually help")
+    with pytest.raises(VerificationFailed, match="independent security invariant failed"):
+        verify(candidate, FINDING, path, scanner)
+
+
+def test_a_kind_with_no_independent_invariant_is_verified_by_the_rescan_alone(tmp_path):
+    original, fixed = "os.system(cmd)", "subprocess.run(cmd, shell=False)"
+    path = _file(tmp_path, original)
+    finding = StaticFinding("shell_command", "vendor.py", 1, "shell injection")
+    scanner = _ScriptedScanner({original: [("shell_command", 1)], fixed: []})
+    candidate = CodemodCandidate("shell_command", original, fixed, "no shell")
+    verified = verify(candidate, finding, path, scanner)
+    assert verified.verified_by == ("rescan",)
