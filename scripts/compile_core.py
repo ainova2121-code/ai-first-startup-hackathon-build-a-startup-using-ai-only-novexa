@@ -25,6 +25,7 @@ exception). Leaving annotation enforcement on changed real behaviour under compi
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -43,6 +44,7 @@ DIRECTIVES = {"language_level": "3", "annotation_typing": False}
 # wins over the IP-protection property here.
 CORE_MODULES = [
     "purpleteam/oracle.py",
+    "purpleteam/identity.py",
     "purpleteam/defender/selector.py",
     "purpleteam/patches/catalog.py",
     "purpleteam/attack/outcome.py",
@@ -60,11 +62,12 @@ CORE_MODULES = [
 ]
 
 
-def translate() -> list[str]:
-    """Cython's front end only; returns the modules that failed to translate (empty = all clean)."""
+def translate(root: Path = ROOT) -> list[str]:
+    """Cython's front end only; returns the modules that failed to translate (empty = all clean).
+    ``root`` lets a release build translate a staged copy instead of this repo itself."""
     from Cython.Build import cythonize
 
-    sources = [str(ROOT / module) for module in CORE_MODULES]
+    sources = [str(root / module) for module in CORE_MODULES]
     failed = []
     for module, source in zip(CORE_MODULES, sources):
         try:
@@ -74,18 +77,27 @@ def translate() -> list[str]:
     return failed
 
 
-def build() -> None:
-    """Compile the translated ``.c`` files into importable extensions. Needs a C toolchain."""
+def build(root: Path = ROOT) -> None:
+    """Compile the translated ``.c`` files into importable extensions under ``root``. Needs a C
+    toolchain. ``build_ext --inplace`` anchors its output to the current working directory (the
+    original code only ever worked because CI happens to run it from this repo's own root), so
+    this runs with ``root`` as the working directory and always restores the original one, even
+    if the build fails — a release build must never run from inside the real repo."""
     from Cython.Build import cythonize
     from setuptools import Extension
     from setuptools.dist import Distribution
 
-    extensions = [Extension(module.removesuffix(".py").replace("/", "."), [str(ROOT / module)])
+    extensions = [Extension(module.removesuffix(".py").replace("/", "."), [str(root / module)])
                  for module in CORE_MODULES]
     dist = Distribution({"ext_modules": cythonize(extensions, compiler_directives=DIRECTIVES)})
     dist.script_args = ["build_ext", "--inplace"]
     dist.parse_command_line()
-    dist.run_commands()
+    previous = Path.cwd()
+    os.chdir(root)
+    try:
+        dist.run_commands()
+    finally:
+        os.chdir(previous)
 
 
 def _main() -> None:

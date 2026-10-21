@@ -1,0 +1,9 @@
+# Copy to deploy/Caddyfile and set your real domain — Caddy then provisions and renews a TLS
+# certificate for it automatically (Let's Encrypt), no further configuration needed.
+#
+# Trying it locally with no domain yet? Set GATEWAY_DOMAIN=localhost in .env.gateway instead:
+# Caddy issues itself a local, self-signed certificate for that case.
+
+{$GATEWAY_DOMAIN} {
+	reverse_proxy gateway:8080
+}

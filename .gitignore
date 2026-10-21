@@ -69,6 +69,12 @@ web_modules/
 .env
 .env.*
 !.env.example
+!.env.gateway.example
+
+# gateway deployment: real secrets and host-specific config, never the committed templates
+/deploy/secrets/
+/deploy/Caddyfile
+!/deploy/Caddyfile.example
 
 # parcel-bundler cache (https://parceljs.org/)
 .cache

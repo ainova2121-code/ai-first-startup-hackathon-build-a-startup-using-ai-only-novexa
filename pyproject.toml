@@ -22,11 +22,14 @@ dev = [
     "cython>=3.3.0",
 ]
 # The purple-team platform (attacks the target). Kept separate so LedgerPilot stays lean.
+# torch is llm-guard's own dependency, not ours — listed explicitly only so tool.uv.sources below
+# actually applies to it (uv does not reliably redirect a purely transitive package's index).
 platform = ["pyrit>=1.1", "httpx>=0.27", "sqlglot>=25.0", "cryptography>=48.0", "rfc3161-client==1.0.9", "bandit>=1.7",
-           "llm-guard>=0.3"]
+           "llm-guard>=0.3", "torch>=2.14"]
 # The LLM gateway's own runtime: no pyrit/bandit (attack/SAST-time only, not needed by a standing
 # service). llm-guard is included because P2 (prompt-injection screening) is a real runtime guard.
-gateway = ["httpx>=0.27", "sqlglot>=25.0", "cryptography>=48.0", "rfc3161-client==1.0.9", "llm-guard>=0.3"]
+gateway = ["httpx>=0.27", "sqlglot>=25.0", "cryptography>=48.0", "rfc3161-client==1.0.9", "llm-guard>=0.3",
+          "torch>=2.14"]
 
 [build-system]
 requires = ["hatchling"]
@@ -39,6 +42,17 @@ packages = ["ledgerpilot"]
 # The pip cache and the venv are on different drives here; hardlinking corrupts large
 # wheels (torch). Copy mode avoids it. Keep this when installing heavy deps like llm-guard.
 link-mode = "copy"
+
+[tool.uv.sources]
+# llm-guard (platform/gateway groups) pulls in torch for its local classifier. Left unpinned,
+# that resolves to the default CUDA-enabled wheel — several GB of NVIDIA runtime libraries no
+# gateway container has a GPU to use. The CPU-only build is the same package, just without them.
+torch = [{ index = "pytorch-cpu" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

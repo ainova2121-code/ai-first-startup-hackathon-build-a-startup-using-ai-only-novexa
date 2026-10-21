@@ -8,7 +8,6 @@ __pycache__
 !.env.example
 data/*.db
 tests
-scripts
 *.md
 NOTICE
 .github

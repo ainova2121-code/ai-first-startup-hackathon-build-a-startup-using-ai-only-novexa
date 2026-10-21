@@ -1,0 +1,63 @@
+# One-host deployment: the gateway behind Caddy for automatic TLS (the gateway refuses to start
+# without confirming TLS is terminated upstream of it — see Dockerfile.gateway). Default
+# enforcement is off (observe-only) until you've reviewed what discovery finds and approved a
+# signed policy; see README.md for the full quickstart.
+#
+# Before the first run:
+#   cp .env.gateway.example .env.gateway            # fill in your model provider, redactor secret
+#   cp deploy/Caddyfile.example deploy/Caddyfile     # set your real domain (or "localhost" to try it locally)
+#   mkdir -p deploy/secrets && openssl rand -hex 32 > deploy/secrets/keyring_passphrase
+#
+# Then:
+#   docker compose up -d
+#   docker compose logs gateway    # the one-time bootstrap admin/target keys print here ONCE — save them
+
+services:
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway
+    image: ${GATEWAY_IMAGE:-purpleteam-gateway:local}
+    restart: unless-stopped
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp
+    env_file:
+      - .env.gateway
+    environment:
+      GATEWAY_TLS_TERMINATED_UPSTREAM: "true"
+      GATEWAY_KEYRING_DIR: /var/lib/purpleteam/keyring
+      GATEWAY_KEYS_FILE: /var/lib/purpleteam/keys.json
+      GATEWAY_LEDGER_PATH: /var/lib/purpleteam/audit.jsonl
+      GATEWAY_TRUST_FILE: /var/lib/purpleteam/trust.json
+      GATEWAY_KEYRING_PASSPHRASE_FILE: /run/secrets/keyring_passphrase
+    secrets:
+      - keyring_passphrase
+    volumes:
+      - gateway-state:/var/lib/purpleteam
+    expose:
+      - "8080"
+
+  tls:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - gateway
+    env_file:
+      - .env.gateway
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+
+volumes:
+  gateway-state:
+  caddy-data:
+
+secrets:
+  keyring_passphrase:
+    file: ./deploy/secrets/keyring_passphrase

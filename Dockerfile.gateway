@@ -1,33 +1,108 @@
+# syntax=docker/dockerfile:1
+#
 # The LLM gateway, domain-agnostic: this image never bundles LedgerPilot (or any other target) —
 # see purpleteam/patches/base.py's docstring for why that boundary matters. It installs only the
 # "gateway" dependency group (purpleteam/sandbox.py's module docstring explains the project's
 # base [project.dependencies] still belong to LedgerPilot today; a known, separately-tracked gap).
 #
+# This container speaks plain HTTP. It MUST sit behind a TLS-terminating load balancer, ingress or
+# sidecar — never expose port 8080 directly to a network you do not control. purpleteam.gateway_main
+# refuses to start without GATEWAY_TLS_TERMINATED_UPSTREAM=true confirming that is in place.
+#
+# Recommended: pull the vendor-signed image instead of building it yourself — every build here
+# recompiles 16 modules with a full C toolchain (see the "compiler" stage below). The RUN steps
+# cache their package downloads across builds (BuildKit cache mounts, below), so a *repeat* build
+# on the same machine is fast; a customer's very first build, or CI's first run on a fresh runner,
+# still pays the full download+compile cost once. Paying it once per release in CI
+# (.github/workflows/publish-gateway.yml) instead of on every customer's machine is still better.
+#
+#   docker pull ghcr.io/<owner>/purpleteam-gateway@sha256:<digest from the release you were given>
+#   cosign verify ghcr.io/<owner>/purpleteam-gateway@sha256:<digest> \
+#     --certificate-identity-regexp 'https://github.com/<owner>/.*' \
+#     --certificate-oidc-issuer https://token.actions.githubusercontent.com
+#
+# Deploy by that digest, never a mutable tag like :latest, so what you run is exactly what you
+# verified. Building from source yourself remains fully supported — nothing here is hidden, and
+# comparing your own build's output against the signed one is a reasonable thing to do:
+#
 # Build:  docker build -f Dockerfile.gateway -t purpleteam-gateway .
 # Run:    docker run --rm -p 8080:8080 \
 #           -e GATEWAY_OPENAI_URL=https://api.openai.com/v1 -e GATEWAY_OPENAI_KEY=sk-... \
 #           -e GATEWAY_REDACTOR_SECRET="$(openssl rand -hex 32)" \
+#           -e GATEWAY_TLS_TERMINATED_UPSTREAM=true \
 #           purpleteam-gateway
+#
+# Hardened for production: a read-only root filesystem, no new privileges, every Linux capability
+# dropped (the image already runs as non-root; it never needs CAP_* at all), with the only paths
+# this process writes to (its signing keyring, the ledger, the two bearer-key/trust files) given
+# their own writable mounts — everything else in the container stays read-only.
+#
+# Run:    docker run --rm -p 8080:8080 --read-only --cap-drop=ALL --security-opt=no-new-privileges \
+#           --tmpfs /tmp \
+#           -v gateway-state:/var/lib/purpleteam \
+#           -e GATEWAY_KEYRING_DIR=/var/lib/purpleteam/keyring \
+#           -e GATEWAY_KEYS_FILE=/var/lib/purpleteam/keys.json \
+#           -e GATEWAY_LEDGER_PATH=/var/lib/purpleteam/audit.jsonl \
+#           -e GATEWAY_TRUST_FILE=/var/lib/purpleteam/trust.json \
+#           -e GATEWAY_OPENAI_URL=https://api.openai.com/v1 -e GATEWAY_OPENAI_KEY=sk-... \
+#           -e GATEWAY_REDACTOR_SECRET="$(openssl rand -hex 32)" \
+#           -e GATEWAY_TLS_TERMINATED_UPSTREAM=true \
+#           purpleteam-gateway
+#
+# Verified by actually building and running this image: the full build now succeeds end to end
+# (two real bugs found and fixed along the way — see git history for _strip_compiled_sources and
+# this stage's WORKDIR). The container has not yet been confirmed to start clean under --read-only
+# specifically with the WORKDIR fix in place; that run is still pending re-verification.
+#
+# On revocation: there is no way to stop an already-running, offline, never-updated deployment
+# from continuing to run an old, later-revoked image — doing that would need the gateway to call
+# home at startup, which this project deliberately does not do (see purpleteam/licensing.py's same
+# no-phone-home choice). Revocation only takes effect the next time an operator deploys: `cosign
+# verify` on a re-pull fails once a digest is revoked upstream; it cannot reach back into a
+# container already running.
 
 FROM python:3.12-slim AS builder
 
 RUN pip install --no-cache-dir uv==0.12.3
+# uv's own bundled root store doesn't recognize the cert chain the PyTorch CPU-wheel CDN
+# (download-r2.pytorch.org) presents, even though it's a legitimate cert, not an interception —
+# the platform's own certificate store (fresher, fuller) does. uv's own error message recommends
+# exactly this.
+ENV UV_SYSTEM_CERTS=1
 
-WORKDIR /build
+# Matches the runtime stage's own WORKDIR below: uv's console scripts hardcode an absolute shebang
+# to the venv's own location at the moment it was created, so building it anywhere else and then
+# copying it to /app would leave every script (uvicorn included) pointing at a path that no longer
+# exists in the image that actually ships.
+WORKDIR /app
 COPY pyproject.toml uv.lock ./
 # Dependencies only, in their own layer: a change to purpleteam's source never invalidates this
 # (and the project itself is never installed here — its wheel target packages LedgerPilot, which
 # this image does not and must not need).
-RUN uv sync --frozen --no-install-project --no-dev --group gateway
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-install-project --no-dev --group gateway
 
 COPY purpleteam ./purpleteam
+COPY scripts ./scripts
+
+# A separate stage: a C toolchain and Cython exist only here, never in the runtime image below.
+# Compiles the crown-jewel modules (scripts/compile_core.py) and strips their .py source — see
+# scripts/build_release.py's module docstring for what this does and does not protect.
+FROM builder AS compiler
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install --no-install-recommends -y gcc libc6-dev
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-install-project --group dev --group platform
+RUN uv run python scripts/build_release.py --stage purpleteam /compiled
 
 FROM python:3.12-slim AS runtime
 
 RUN useradd --create-home --shell /usr/sbin/nologin gateway
 WORKDIR /app
-COPY --from=builder /build/.venv /app/.venv
-COPY --from=builder /build/purpleteam /app/purpleteam
+COPY --from=builder /app/.venv /app/.venv
+COPY --from=compiler /compiled/purpleteam /app/purpleteam
 
 ENV PATH="/app/.venv/bin:${PATH}" PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 USER gateway
