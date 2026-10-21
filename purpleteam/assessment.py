@@ -2,8 +2,8 @@
 
 This is the platform's single entry point. It chains the proven pieces — attack corpus,
 proof-based oracle, defender, verifier, signed audit ledger, compliance mapping and (optionally)
-the explainer — into one report. It stays domain-agnostic: the target factory, oracle, discovery
-profile and the legitimate-behaviour checks are all supplied by the caller.
+the explainer — into one report. Domain-agnostic: the target factory, oracle, discovery profile
+and legitimate-behaviour checks are all supplied by the caller.
 """
 
 from __future__ import annotations
@@ -15,10 +15,12 @@ from typing import Any, Callable
 from purpleteam.adapter import Target
 from purpleteam.blast import blast_radius
 from purpleteam.attack.corpus import AttackTemplate, CorpusResult, action_objective, build_corpus, run_corpus
+from purpleteam.attack.outcome import INCONCLUSIVE
+from purpleteam.attack.regressions import load_regressions, record_breaches, retest_against
 from purpleteam.audit.compliance import evidence_report
 from purpleteam.audit.ledger import AuditLedger
-from purpleteam.defender.selector import Defender, Defense, Finding
-from purpleteam.patches.catalog import FINDING_PATCHES, OPTIONAL_PATCHES
+from purpleteam.defender.selector import Defender, Defense, Finding, findings_from_breaches
+from purpleteam.patches.catalog import missing_patches
 from purpleteam.discovery import TargetProfile
 from purpleteam.explainer import Explanation
 from purpleteam.focus import plan_focus
@@ -52,6 +54,12 @@ class AssessmentReport:
 
     @property
     def safe_to_ship(self) -> bool:
+        """False whenever no attack ran, any one was inconclusive, or the audit chain itself does
+        not verify — even with zero findings: proving nothing, or on evidence that cannot be
+        trusted, is not the same as proving safety (the same reason ``run`` never lets a narrow
+        scope's ledger entry read as a clean bill)."""
+        if not self.results or any(r.outcome == INCONCLUSIVE for r in self.results) or not self.chain_ok:
+            return False
         return not self.findings or bool(self.verification and self.verification.safe_to_ship)
 
     def to_dict(self) -> dict:
@@ -96,6 +104,7 @@ class Assessment:
         baseline: dict | None = None,
         scanner: Scanner | None = None,
         repo: str | Path | None = None,
+        regressions: str | Path | None = None,
     ) -> None:
         self._factory = factory
         self._oracle = oracle
@@ -115,15 +124,16 @@ class Assessment:
         self._baseline = None if baseline is None else check_baseline(baseline)  # what the agents were, to spot drift
         self._scanner = scanner  # optional static-analysis backend (purpleteam.sast); None skips repo analysis
         self._repo = None if repo is None else Path(repo)
+        self._regressions = None if regressions is None else Path(regressions)  # see attack.regressions
 
     async def run(self, templates: list[AttackTemplate] | None = None, *, focus: list[str] | None = None,
                   agent: str | None = None, disguise_with: list[str] | None = None,
-                  place_with: list[str] | None = None) -> AssessmentReport:
+                  place_with: list[str] | None = None, timeout: float | None = 120) -> AssessmentReport:
         """Attack with ``templates``, or only the chosen ``focus`` topics (optionally one ``agent``), or the default
         corpus. Judge a focused run with ``focus_oracle`` so only the oracles that apply to the topic can call a
         breach. ``disguise_with``/``place_with`` additionally run each template disguised or placed inside cover
-        text (see ``attack.corpus.run_corpus``); a breach is verified against the exact variant that caused it,
-        disguised or placed form included, never against the plain template alone."""
+        text; a breach is verified against the exact variant that caused it, never the plain template alone.
+        ``timeout`` bounds each attempt — raise it for a slow-but-honest target rather than poison the run."""
         scope: dict = {}
         if focus is not None:
             plan = plan_focus(self._profile, focus, agent=agent, secrets=self._facts.get("secrets", ()),
@@ -131,8 +141,11 @@ class Assessment:
             templates, scope = plan.templates, {"focus": list(focus), "agent": agent, "skipped": plan.skipped}
         elif templates is None:
             templates = build_corpus(action_objective(self._profile.dangerous_tools))
+            scope = {"corpus": "default", "templates": [t.id for t in templates],
+                     "not_run": "adaptive (PAIR/TAP) search and disguise/placement variants were not run — "
+                               "pass disguise_with/place_with, or see purpleteam.attack.adaptive, to add them"}
         results = await run_corpus(self._factory(None), self._oracle, templates, canary=self._canary,
-                                   disguise_with=disguise_with, place_with=place_with)
+                                   disguise_with=disguise_with, place_with=place_with, timeout=timeout)
         report = AssessmentReport(self._profile.name, results, scope=scope)
         self._check_identity(report)
         static = self._scan_repo(report)
@@ -143,8 +156,10 @@ class Assessment:
         self._record_attacks(results)
 
         breaches = [r for r in results if r.breached]
-        if breaches or static or identity_findings:
-            self._defend_and_verify(report, breaches, static, identity_findings)
+        all_breaches = breaches + self._regression_breaches()
+        if all_breaches or static or identity_findings:
+            self._defend_and_verify(report, all_breaches, static, identity_findings)
+            record_breaches(self._regressions, breaches)  # only this run's own, new breaches
         self._seal(report)
         return report
 
@@ -160,11 +175,11 @@ class Assessment:
 
     def _defend_and_verify(self, report: AssessmentReport, breaches: list[CorpusResult],
                            static: list[Finding] = (), identity_findings: list[Finding] = ()) -> None:
-        report.findings = _findings(breaches) + list(static) + list(identity_findings)
+        report.findings = findings_from_breaches(breaches) + list(static) + list(identity_findings)
         report.defense = Defender(self._profile, self._facts).select_all(report.findings)
         applied = set(report.defense.patch_ids)
         gaps = {kind: missing for kind in sorted({f.kind for f in report.findings})
-               if (missing := _missing_patches(kind, applied))}
+               if (missing := missing_patches(kind, applied))}
         patch_event = {"patch_ids": report.defense.patch_ids, "patches": report.defense.applied,
                        "rationale": report.defense.rationale}
         if "P11" in report.defense.patch_ids:  # an inferred manifest only forbids what an agent does not already hold
@@ -174,7 +189,7 @@ class Assessment:
             patch_event["unpatched_detail"] = gaps  # kind -> exactly which recommended patch ids did not apply
         self._ledger.append("defender", "patch", patch_event)
 
-        payloads = [b.payload for b in breaches]  # the exact text that breached, disguise/placement included
+        payloads = self._verification_attacks(breaches)
         patched = self._factory(report.defense.guard)
         report.verification = verify(patched, self._oracle, attacks=payloads, legit=self._legit)
         if gaps:
@@ -191,6 +206,24 @@ class Assessment:
         if self._explainer:
             report.explanations = [self._explainer(f, report.defense, report.verification)
                                    for f in report.findings]
+
+    def _regression_breaches(self) -> list[CorpusResult]:
+        """Every exploit proven earlier, re-tested before being treated as a breach. [] without ``regressions=``."""
+        cases = load_regressions(self._regressions)
+        if not cases:
+            return []
+        breaches, log = retest_against(cases, self._factory(None), self._oracle)
+        self._ledger.append("attacker", "regressions_retested", {"results": log})
+        return breaches
+
+    def _verification_attacks(self, breaches: list[CorpusResult]) -> list[str]:
+        """Every distinct payload among ``breaches`` — a regression case can coincide with a fresh breach."""
+        seen, payloads = set(), []
+        for b in breaches:
+            if b.payload and b.payload not in seen:
+                seen.add(b.payload)
+                payloads.append(b.payload)
+        return payloads
 
     def _check_identity(self, report: AssessmentReport) -> None:
         """Every agent's tools and permissions, checked against its declared manifest and its baseline (if any).
@@ -250,29 +283,14 @@ class Assessment:
         }
 
 
-def _missing_patches(kind: str, applied: set[str]) -> list[str]:
-    """Catalog-recommended patch ids for ``kind`` that did not actually get applied — a patch that
-    silently failed to build (P2 with no ML backend available, say) is a real gap, not "patched
-    enough" just because something else for the same kind happened to succeed. A kind with no
-    catalog entry at all is reported the same way, via its own name as the one missing answer."""
-    recommended = FINDING_PATCHES.get(kind)
-    if recommended is None:
-        return ["no catalog entry"]
-    required = set(recommended) - OPTIONAL_PATCHES
-    return sorted(required - applied)
-
-
 _IDENTITY_PATCHABLE = {"excess_privilege", "undeclared_agent", "unscoped_execution"}
 
 
 def _identity_findings(identity: dict) -> list[Finding]:
-    """Structural identity findings the catalog can actually answer (excess_privilege,
-    undeclared_agent, unscoped_execution) feed into the same Defender pipeline a breach does —
-    previously only a *proven* privilege_escalation breach ever reached the defender, never a
-    *discovered* excess_privilege finding, even though P11 answers both equally well. Every other
-    identity finding kind (shared_credential, unauthenticated_agent, a prompt or model change...)
-    has no sensible runtime guard and stays report-only, exactly as before: claiming a patch for
-    those would assert a fix that does not exist."""
+    """Structural identity findings the catalog can answer (excess_privilege, undeclared_agent,
+    unscoped_execution) feed into the same Defender pipeline a breach does. Every other kind
+    (shared_credential, a prompt or model change...) has no sensible runtime guard and stays
+    report-only: claiming a patch for those would assert a fix that does not exist."""
     found = []
     for f in identity.get("findings", []):
         if f["kind"] not in _IDENTITY_PATCHABLE:
@@ -280,19 +298,3 @@ def _identity_findings(identity: dict) -> list[Finding]:
         for tool in (f["tools"] or [""]):
             found.append(Finding(f["kind"], tool, f["agent"], f["detail"], source="static"))
     return found
-
-
-def _findings(breaches: list[CorpusResult]) -> list[Finding]:
-    """One finding per distinct (kind, tool, agent); several attacks through one hole are one hole. Signal
-    evidence (never the breach verdict itself) is pooled across every attack that found the same hole."""
-    signals: dict[tuple, dict] = {}
-    for r in breaches:
-        key = (r.kind, r.tool, r.agent)
-        pool = signals.setdefault(key, {})
-        for s in r.signals:
-            pool[(s.scorer, s.pattern, s.where)] = s
-    unique: dict[tuple, Finding] = {}
-    for r in breaches:
-        key = (r.kind, r.tool, r.agent)
-        unique.setdefault(key, Finding(r.kind, r.tool, r.agent, r.detail, tuple(signals[key].values())))
-    return list(unique.values())

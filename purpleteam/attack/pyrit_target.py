@@ -105,7 +105,8 @@ class PlatformPromptTarget(PromptTarget):
         try:
             observation = await call_in_daemon_thread(self._send, text)
         except asyncio.CancelledError:
-            raise  # the thread keeps running; `poisoned` stays True until a fresh begin_attempt
+            raise  # the thread keeps running; nothing ever clears `poisoned` — not even begin_attempt — so this
+            # instance must not be reused for a further attempt; the caller needs a fresh one
         except Exception:
             self._in_flight = False
             raise

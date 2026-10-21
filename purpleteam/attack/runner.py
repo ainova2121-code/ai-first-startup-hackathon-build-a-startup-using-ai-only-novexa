@@ -19,9 +19,10 @@ from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 from purpleteam.adapter import Target
+from purpleteam.attack.outcome import BREACHED, HELD, INCONCLUSIVE
 from purpleteam.attack.pyrit_scorer import OracleScorer
 from purpleteam.attack.pyrit_target import PlatformPromptTarget
-from purpleteam.oracle import CANARY_ACCOUNT, CanaryOracle
+from purpleteam.oracle import CANARY_ACCOUNT, CanaryOracle, Oracle
 
 STRATEGIES = {"redteam": RedTeamingAttack, "crescendo": CrescendoAttack}
 
@@ -40,6 +41,7 @@ class CampaignResult:
     strategy: str
     breached: bool
     detail: str
+    outcome: str = ""  # breached | held | inconclusive (see purpleteam.attack.outcome)
     attempts: list[str] = field(default_factory=list)
 
 
@@ -83,17 +85,37 @@ async def run_campaign(
         max_turns=max_turns,
     )
     coro = attack.execute_async(objective=objective)
+    completed = True
     try:
         await (asyncio.wait_for(coro, timeout) if timeout else coro)
-    except asyncio.TimeoutError:
-        pass
-
-    observation = pyrit_target.last_observation
-    verdict = oracle.judge(observation) if observation else None
+    except Exception:  # a timeout, or a mid-attack failure (the adversarial model refusing
+        completed = False  # outright can break PyRIT's own retry loop): whatever the target
+                           # actually saw is still real evidence, never a reason to crash the run
+    breached, detail, outcome = _campaign_outcome(pyrit_target, oracle, completed=completed)
     return CampaignResult(
-        objective=objective,
-        strategy=strategy,
-        breached=bool(verdict and verdict.breached),
-        detail=verdict.detail if verdict else "the target produced no observation",
-        attempts=pyrit_target.attempts,
+        objective=objective, strategy=strategy, breached=breached, detail=detail,
+        outcome=outcome, attempts=pyrit_target.attempts,
     )
+
+
+def _campaign_outcome(pyrit_target: PlatformPromptTarget, oracle: Oracle, *, completed: bool) -> tuple[bool, str, str]:
+    """(breached, detail, outcome) from every observation the target actually saw -- not just the
+    last one, since a later turn's send overwrites ``last_observation`` and must not hide a breach
+    an earlier turn already proved. Kept separate from run_campaign so it is testable without
+    driving a real PyRIT attack.
+
+    ``completed`` is False when the attack strategy itself was interrupted (a timeout, or a
+    mid-attack failure such as the adversarial model refusing outright and breaking PyRIT's own
+    retry loop). A proven breach is reported regardless -- it does not stop being proof because
+    something failed afterward -- but with no breach found, an interrupted run never got a fair,
+    complete shot, so it must read as inconclusive, never as a silent, indistinguishable-from-
+    genuine hold."""
+    if not pyrit_target.observations:
+        return False, "the attacker never sent anything the target received", INCONCLUSIVE
+    for observation in pyrit_target.observations:
+        verdict = oracle.judge(observation)
+        if verdict.breached:
+            return True, verdict.detail, BREACHED
+    if not completed:
+        return False, "the campaign was interrupted before completing; nothing it saw breached, but it never ran its full course", INCONCLUSIVE
+    return False, oracle.judge(pyrit_target.last_observation).detail, HELD

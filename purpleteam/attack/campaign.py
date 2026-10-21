@@ -23,7 +23,7 @@ async def main() -> None:
         LedgerPilotTarget(), objective=action_objective(dangerous).replace(CANARY_MARK, CANARY_ACCOUNT),
         strategy="redteam", dangerous_tools=dangerous, max_turns=3,
     )
-    print(f"\n{'BREACHED' if result.breached else 'HELD'} — {result.detail}")
+    print(f"\n{result.outcome.upper()} — {result.detail}")
     for i, attempt in enumerate(result.attempts, 1):
         print(f"  attempt {i}: {attempt[:160].strip()}")
 
