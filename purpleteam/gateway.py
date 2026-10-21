@@ -43,6 +43,8 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import SecretStr
 
+from purpleteam.gateway_containment import LiveContainment
+from purpleteam.gateway_debug import ReasoningDebugLog
 from purpleteam.gateway_dialects import ANTHROPIC, GEMINI, OPENAI, Dialect
 from purpleteam.gateway_keys import ADMIN, TARGET, AuthError, GatewayKeys
 from purpleteam.gateway_observer import GatewayObserver
@@ -115,11 +117,14 @@ async def _tee(upstream_response: httpx.Response, observer: GatewayObserver, dec
 def create_gateway(observer: GatewayObserver, *, keys: GatewayKeys, openai: Provider | None = None,
                    anthropic: Provider | None = None, gemini: Provider | None = None,
                    client: httpx.AsyncClient | None = None, guard: Guard | None = None, ledger: Any = None,
-                   redactor: Any = None, allow_native_tools: bool = False, fail_closed: bool = True) -> FastAPI:
+                   redactor: Any = None, allow_native_tools: bool = False, fail_closed: bool = True,
+                   containment: LiveContainment | None = None,
+                   reasoning_debug: ReasoningDebugLog | None = None) -> FastAPI:
     if not (openai or anthropic or gemini):
         raise ValueError("configure at least one provider")
     decisions = DecisionPoint(observer, guard=guard, ledger=ledger, redactor=redactor,
-                              allow_native_tools=allow_native_tools, fail_closed=fail_closed)
+                              allow_native_tools=allow_native_tools, fail_closed=fail_closed,
+                              containment=containment, reasoning_debug=reasoning_debug)
     http = client or httpx.AsyncClient(timeout=300)
 
     @asynccontextmanager
@@ -189,7 +194,8 @@ def create_gateway(observer: GatewayObserver, *, keys: GatewayKeys, openai: Prov
             answer = None
         if isinstance(answer, dict) and upstream_response.status_code < 400:
             try:
-                replacement = await run_in_threadpool(decisions.process, dialect, payload, answer, hint, model, identity)
+                replacement = await run_in_threadpool(decisions.process, dialect, payload, answer, hint, model,
+                                                      identity, key_id)
             except Refusal as refusal:
                 raise HTTPException(refusal.status, refusal.message) from None
             if replacement is not None:

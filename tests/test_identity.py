@@ -138,6 +138,15 @@ def test_the_scope_oracle_flags_only_calls_outside_an_agents_permissions():
     assert not combined.judge(ok).breached
 
 
+def test_the_scope_oracle_also_catches_a_resource_scoped_violation():
+    scoped = PermissionManifest.from_dict(
+        {"payment": [{"tool": "schedule_payment", "arg": "country", "values": ["US"]}]})
+    oracle = ScopeOracle(scoped)
+    assert not oracle.judge(Observation("", [ToolCall("payment", "schedule_payment", {"country": "US"})])).breached
+    verdict = oracle.judge(Observation("", [ToolCall("payment", "schedule_payment", {"country": "FR"})]))
+    assert (verdict.breached, verdict.kind) == (True, "privilege_escalation")
+
+
 def test_the_agent_scope_guard_denies_by_default_and_names_only_the_agent_and_tool():
     guard = AgentScopeGuard(INTENDED)
     guard.authorize("vendor", "lookup_vendor", {"name": "acme"})
@@ -145,6 +154,15 @@ def test_the_agent_scope_guard_denies_by_default_and_names_only_the_agent_and_to
         with pytest.raises(Blocked) as blocked:
             guard.authorize(agent, tool, {"bank_account": "US00SECRET0000"})
         assert str(blocked.value) == f"agent '{agent}' is not permitted to call {tool}"
+
+
+def test_the_agent_scope_guard_also_enforces_a_resource_scoped_rule():
+    scoped = PermissionManifest.from_dict(
+        {"payment": [{"tool": "schedule_payment", "arg": "country", "values": ["US"]}]})
+    guard = AgentScopeGuard(scoped)
+    guard.authorize("payment", "schedule_payment", {"country": "US"})
+    with pytest.raises(Blocked, match="only with country in"):
+        guard.authorize("payment", "schedule_payment", {"country": "FR"})
 
 
 def test_the_defender_builds_the_scope_guard_from_the_declared_manifest_or_what_agents_hold():
@@ -220,6 +238,38 @@ def test_manifest_names_allow_single_spaces_but_not_control_characters_or_odd_sp
     for bad in ({"two  spaces": []}, {" lead": []}, {"trail ": []}, {"a\tb": []}, {"ok": ["x\ry"]}):
         with pytest.raises(ValueError):
             PermissionManifest.from_dict(bad)
+
+
+def test_a_resource_scoped_entry_permits_the_tool_only_for_matching_argument_values():
+    manifest = PermissionManifest.from_dict(
+        {"payment": [{"tool": "schedule_payment", "arg": "currency", "values": ["usd", "eur"]}]})
+    assert manifest.permits("payment", "schedule_payment", {"currency": "usd"})
+    assert manifest.permits("payment", "schedule_payment", {"currency": "EUR"})  # case-insensitive
+    assert not manifest.permits("payment", "schedule_payment", {"currency": "gbp"})
+    assert not manifest.permits("payment", "schedule_payment", {})  # missing argument is not a match
+    assert manifest.reason_denied("payment", "schedule_payment", {"currency": "gbp"}) == (
+        "agent 'payment' may call schedule_payment only with currency in ['EUR', 'USD']")
+
+
+def test_an_unscoped_tool_is_permitted_for_any_resource():
+    manifest = PermissionManifest.from_dict({"vendor": ["lookup_vendor"]})
+    assert manifest.permits("vendor", "lookup_vendor", {"anything": "goes"})
+
+
+def test_a_resource_scoped_manifest_round_trips_through_to_dict_and_from_dict():
+    manifest = PermissionManifest.from_dict(
+        {"vendor": ["lookup_vendor", {"tool": "update_vendor_bank", "arg": "country", "values": ["US"]}]})
+    restored = PermissionManifest.from_dict(manifest.to_dict())
+    assert restored.permits("vendor", "update_vendor_bank", {"country": "us"})
+    assert not restored.permits("vendor", "update_vendor_bank", {"country": "FR"})
+    assert restored.permits("vendor", "lookup_vendor")
+
+
+def test_a_malformed_resource_scoped_entry_is_rejected():
+    for bad in ({"tool": "x"}, {"tool": "x", "arg": "y", "values": []}, {"tool": "x", "arg": "y", "values": [1]},
+                {"arg": "y", "values": ["a"]}, 123, None, {"tool": "bad name!", "arg": "y", "values": ["a"]}):
+        with pytest.raises(ValueError):
+            PermissionManifest.from_dict({"vendor": [bad]})
 
 
 def test_a_manifest_file_with_duplicate_agents_or_an_oversized_body_is_rejected(tmp_path):

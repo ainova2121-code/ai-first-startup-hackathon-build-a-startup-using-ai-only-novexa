@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
+from purpleteam.adapter import OBSERVED, PROPOSED, REPORTED
 from purpleteam.discovery import EXECUTE, TargetProfile
 from purpleteam.identity import PermissionManifest
 from purpleteam.patches.base import CompositeGuard, Patch
@@ -18,6 +20,9 @@ from purpleteam.patches.catalog import FINDING_PATCHES, GLOBAL_PATCHES, PATCH_SU
 from purpleteam.patches.rules import AgentScopeGuard, ArgumentAllowlist, EgressGuard, SqlFirewall, ToolGate
 from purpleteam.patches.scanners import InjectionScanner, OutputRedactor, injection_backend_available
 from purpleteam.secrets import SecretFinder
+
+if TYPE_CHECKING:  # pyrit (attack.corpus's own dependency) is attack/SAST-time only, not a gateway runtime need
+    from purpleteam.attack.corpus import CorpusResult
 
 _SECRET_PATTERNS = [re.compile(r"\b[A-Z]{2}\d{10,}\b"), re.compile(r"\bHTK-[A-Z0-9-]+\b")]
 
@@ -30,6 +35,7 @@ class Finding:
     detail: str = ""
     signals: tuple = ()  # extra pattern evidence on the breach (purpleteam.attack.signals.Signal); not itself proof
     source: str = "dynamic"  # dynamic (exploited against the running target) | static (found by reading its source)
+    evidence: str = ""  # proposed | reported | observed (purpleteam.adapter) for a dynamic breach; "" for static
 
 
 MODES = ("staging", "production")
@@ -112,3 +118,32 @@ class Defender:
     def _sql_tools(self, finding: Finding) -> set[str]:
         execute_tools = {t.name for t in self._profile.tools if t.risk == EXECUTE}
         return execute_tools | {finding.tool}
+
+
+_EVIDENCE_STRENGTH = {PROPOSED: 1, REPORTED: 2, OBSERVED: 3}  # weakest first, matching adapter.py's own ordering
+
+
+def findings_from_breaches(breaches: list[CorpusResult]) -> list[Finding]:
+    """One finding per distinct (kind, tool, agent); several attacks through one hole are one hole. Signal
+    evidence (never the breach verdict itself) is pooled across every attack that found the same hole.
+
+    ``evidence`` records the strongest level any pooled attack reached: a canary that only ever
+    appeared in a *proposed* tool call (the model offered it; nothing confirms the call ran) is
+    real evidence the model is willing to break policy, but it is not proof of executed impact —
+    the two must never be presented as the same thing, so the distinction travels with the
+    finding into every report and the defender's own audit entry, not just the raw attack log."""
+    signals: dict[tuple, dict] = {}
+    evidence: dict[tuple, str] = {}
+    for r in breaches:
+        key = (r.kind, r.tool, r.agent)
+        pool = signals.setdefault(key, {})
+        for s in r.signals:
+            pool[(s.scorer, s.pattern, s.where)] = s
+        if _EVIDENCE_STRENGTH.get(r.evidence, 0) >= _EVIDENCE_STRENGTH.get(evidence.get(key, ""), 0):
+            evidence[key] = r.evidence
+    unique: dict[tuple, Finding] = {}
+    for r in breaches:
+        key = (r.kind, r.tool, r.agent)
+        unique.setdefault(key, Finding(r.kind, r.tool, r.agent, r.detail, tuple(signals[key].values()),
+                                       evidence=evidence[key]))
+    return list(unique.values())

@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -49,16 +49,39 @@ def _no_duplicates(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
 @dataclass(frozen=True)
 class PermissionManifest:
     allowed: dict[str, frozenset[str]]  # agent name -> tools it may call; anything else is denied
+    # (agent, tool) -> (argument name, allowed values, upper-cased); absent means any resource is fine.
+    resources: dict[tuple[str, str], tuple[str, frozenset[str]]] = field(default_factory=dict)
 
-    def permits(self, agent: str, tool: str) -> bool:
-        return tool in self.allowed.get(agent, frozenset())
+    def reason_denied(self, agent: str, tool: str, args: dict[str, Any] | None = None) -> str | None:
+        """Why a call would be blocked, or ``None`` if permitted — the one place P11 and the scope oracle
+        both decide this, so their wording and rules never drift apart."""
+        if tool not in self.allowed.get(agent, frozenset()):
+            return f"agent '{agent}' is not permitted to call {tool}"
+        rule = self.resources.get((agent, tool))
+        if rule is None:
+            return None
+        arg, values = rule
+        if str((args or {}).get(arg, "")).strip().upper() in values:
+            return None
+        return f"agent '{agent}' may call {tool} only with {arg} in {sorted(values)}"
 
-    def to_dict(self) -> dict[str, list[str]]:
-        return {agent: sorted(tools) for agent, tools in sorted(self.allowed.items())}
+    def permits(self, agent: str, tool: str, args: dict[str, Any] | None = None) -> bool:
+        return self.reason_denied(agent, tool, args) is None
+
+    def to_dict(self) -> dict[str, list[Any]]:
+        out: dict[str, list[Any]] = {}
+        for agent, tools in sorted(self.allowed.items()):
+            entries: list[Any] = []
+            for tool in sorted(tools):
+                rule = self.resources.get((agent, tool))
+                entries.append(tool if rule is None else {"tool": tool, "arg": rule[0], "values": sorted(rule[1])})
+            out[agent] = entries
+        return out
 
     @classmethod
     def from_profile(cls, profile: TargetProfile) -> PermissionManifest:
-        """A draft: each agent may call exactly the tools it holds today."""
+        """A draft: each agent may call exactly the tools it holds today, unscoped — resource scoping is a
+        business decision discovery cannot infer."""
         held: dict[str, set[str]] = {agent: set() for agent in profile.agents}
         for tool in profile.tools:
             held[tool.agent].add(tool.name)
@@ -66,16 +89,29 @@ class PermissionManifest:
 
     @classmethod
     def from_dict(cls, data: Any) -> PermissionManifest:
+        """Each agent maps to a list of entries: a tool name (unscoped), or ``{"tool", "arg", "values"}``."""
         if not isinstance(data, dict) or len(data) > MAX_AGENTS:
             raise ValueError("a manifest maps agent names to lists of tool names")
         allowed: dict[str, frozenset[str]] = {}
-        for agent, tools in data.items():
-            if not valid_name(agent) or not isinstance(tools, list) or len(tools) > MAX_TOOLS_PER_AGENT:
+        resources: dict[tuple[str, str], tuple[str, frozenset[str]]] = {}
+        for agent, entries in data.items():
+            if not valid_name(agent) or not isinstance(entries, list) or len(entries) > MAX_TOOLS_PER_AGENT:
                 raise ValueError(f"invalid manifest entry for agent {str(agent)[:40]!r}")
-            if not all(valid_name(tool) for tool in tools):
-                raise ValueError(f"invalid tool name in the manifest entry for {agent!r}")
+            tools: set[str] = set()
+            for entry in entries:
+                if isinstance(entry, dict):
+                    tool, arg, values = entry.get("tool"), entry.get("arg"), entry.get("values")
+                    if not (valid_name(tool) and valid_name(arg) and isinstance(values, list) and values
+                            and all(isinstance(v, str) and valid_name(v) for v in values)):
+                        raise ValueError(f"invalid resource-scoped entry in the manifest for {agent!r}")
+                    tools.add(tool)
+                    resources[(agent, tool)] = (arg, frozenset(v.strip().upper() for v in values))
+                elif valid_name(entry):
+                    tools.add(entry)
+                else:
+                    raise ValueError(f"invalid tool entry in the manifest for {agent!r}")
             allowed[agent] = frozenset(tools)
-        return cls(allowed)
+        return cls(allowed, resources)
 
     @classmethod
     def load(cls, path: str | Path) -> PermissionManifest:

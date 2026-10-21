@@ -37,6 +37,8 @@ class Exchange:
     results: list[tuple[str, str]] = field(default_factory=list)  # (call key, result) as the product reported it
     calls: list[tuple[str | None, Any, Any]] = field(default_factory=list)  # (call key, tool name, raw arguments)
     answer: str = ""       # the text of the model's answer
+    reasoning: str = ""    # the model's own reasoning/thinking text, when the provider exposes it (never guaranteed)
+    redacted_reasoning: bool = False  # the provider withheld the reasoning text itself (Anthropic's redacted_thinking)
     native: list[str] = field(default_factory=list)  # tools the provider runs itself, which a gateway cannot hold back
 
 
@@ -109,6 +111,12 @@ class OpenAI:
             message = choice.get("message")
             if isinstance(message, dict) and not exchange.answer:
                 exchange.answer = _text(message.get("content"))
+            # No single field name is standard across OpenAI-compatible backends: DeepSeek and most
+            # others use reasoning_content, OpenAI's own convention is reasoning.
+            if isinstance(message, dict) and not exchange.reasoning:
+                reasoning = message.get("reasoning_content") or message.get("reasoning")
+                if isinstance(reasoning, str):
+                    exchange.reasoning = reasoning
             for call in _dicts(message.get("tool_calls") if isinstance(message, dict) else None):
                 function = call.get("function")
                 if isinstance(function, dict):
@@ -153,10 +161,16 @@ class Anthropic:
                     exchange.results.append((block["tool_use_id"], _text(block.get("content"))))
         exchange.users = "\n".join([exchange.system, *users])
         exchange.answer = _text(response.get("content"))
+        thinking: list[str] = []
         for block in _dicts(response.get("content")):
             if block.get("type") in ("tool_use", "server_tool_use"):
                 exchange.calls.append((block["id"] if isinstance(block.get("id"), str) else None,
                                        block.get("name"), block.get("input")))
+            elif block.get("type") == "thinking" and isinstance(block.get("thinking"), str):
+                thinking.append(block["thinking"])
+            elif block.get("type") == "redacted_thinking":
+                exchange.redacted_reasoning = True  # opaque data, not text: the provider withheld it
+        exchange.reasoning = "\n".join(thinking)
         return exchange
 
     def tap(self) -> "Tap":
@@ -198,14 +212,20 @@ class Gemini:
                     users.append(part["text"])
                     exchange.first_user = exchange.first_user or part["text"]
         exchange.users = "\n".join([exchange.system, *users])
+        thoughts: list[str] = []
         for candidate in _dicts(response.get("candidates")):
             content = candidate.get("content")
             for part in _dicts(content.get("parts") if isinstance(content, dict) else None):
+                if part.get("thought") is True:  # a reasoning summary, not the answer — ThinkingConfig.IncludeThoughts
+                    if isinstance(part.get("text"), str):
+                        thoughts.append(part["text"])
+                    continue
                 if isinstance(part.get("text"), str) and not exchange.answer:
                     exchange.answer = part["text"]
                 call = part.get("functionCall") or part.get("function_call")
                 if isinstance(call, dict):
                     exchange.calls.append((_key(call.get("id"), call.get("name")), call.get("name"), call.get("args")))
+        exchange.reasoning = "\n".join(thoughts)
         return exchange
 
     def tap(self) -> "Tap":

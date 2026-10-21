@@ -18,7 +18,10 @@ what, and whether it was allowed. Enforcement works on what the model *proposes*
 The log holds no raw data. Arguments go through the ledger's redactor (sensitive values become keyed
 commitments), results and reply text appear only as a length and, when a redactor is given, a keyed commitment,
 and oversized or unreadable arguments are summarised instead of stored. By default a decision that cannot be
-written to the log is not released (HTTP 503): no unlogged decisions.
+written to the log is not released (HTTP 503): no unlogged decisions. A model's own reasoning/thinking text
+(see ``gateway_dialects.Exchange.reasoning``) follows a different rule, not this one: it never reaches this
+log at all, not even summarised — see ``gateway_debug.ReasoningDebugLog`` for the separate, explicit,
+operator-opted-in place full reasoning text can go instead.
 """
 
 from __future__ import annotations
@@ -26,6 +29,8 @@ from __future__ import annotations
 import json
 from typing import Any, Protocol
 
+from purpleteam.gateway_containment import ContainmentEvent, LiveContainment
+from purpleteam.gateway_debug import ReasoningDebugLog
 from purpleteam.gateway_dialects import Dialect
 from purpleteam.gateway_observer import GatewayObserver, Observed
 
@@ -50,9 +55,12 @@ class Guard(Protocol):
 
 class DecisionPoint:
     def __init__(self, observer: GatewayObserver, *, guard: Guard | None = None, ledger: Any = None,
-                 redactor: Any = None, allow_native_tools: bool = False, fail_closed: bool = True) -> None:
+                 redactor: Any = None, allow_native_tools: bool = False, fail_closed: bool = True,
+                 containment: LiveContainment | None = None,
+                 reasoning_debug: ReasoningDebugLog | None = None) -> None:
         self._observer, self._guard, self._ledger = observer, guard, ledger
         self._redactor, self._allow_native, self._fail_closed = redactor, allow_native_tools, fail_closed
+        self._containment, self._reasoning_debug = containment, reasoning_debug
 
     @property
     def enforcing(self) -> bool:
@@ -70,13 +78,25 @@ class DecisionPoint:
             raise Refusal(400, f"provider-executed tools cannot be enforced: {names}")
 
     def process(self, dialect: Dialect, payload: dict, response: dict, hint: str | None, model: str,
-                identity: str | None = None) -> dict | None:
-        """Observe the answer, enforce on it, log it. Returns the answer to send instead, or None to send it as is."""
+                identity: str | None = None, key_id: str | None = None) -> dict | None:
+        """Observe the answer, enforce on it, log it. Returns the answer to send instead, or None to send it as is.
+        ``key_id`` is the authenticated bearer key, if any — only needed so containment can revoke it outright."""
         observed = self._observer.observe(payload, response, hint, dialect, identity, model)
-        verdicts = self._verdicts(observed)
+        if self._reasoning_debug is not None:
+            self._debug_reasoning(observed, model)
+        verdicts, containment_events = self._verdicts(observed, key_id)
         withhold = any(policy for _, policy in verdicts)
-        self._record(observed, dialect, model, verdicts, withhold)
+        self._record(observed, dialect, model, verdicts, withhold, containment_events)
         return dialect.block(response, REFUSAL) if withhold else None
+
+    def _debug_reasoning(self, observed: Observed, model: str) -> None:
+        """Best-effort, and outside the signed ledger entirely — see ``gateway_debug``."""
+        try:
+            self._reasoning_debug.record(agent=observed.agent, model=model,
+                                         reasoning=observed.exchange.reasoning,
+                                         redacted=observed.exchange.redacted_reasoning)
+        except Exception:
+            self._observer.note("the reasoning debug log could not be written")
 
     def log_withheld(self, dialect: Dialect, hint: str | None, model: str, identity: str | None, policy: str) -> None:
         """Record that an answer was held back whole (its key stopped being valid while it was in flight). The answer
@@ -90,23 +110,40 @@ class DecisionPoint:
         except Exception:  # the answer is withheld either way; the failure is surfaced, not hidden
             self._observer.note("a withheld answer could not be written to the audit log")
 
-    def _verdicts(self, observed: Observed) -> list[tuple[Any, str]]:
-        """(call, policy that stopped it); an empty policy means allowed."""
+    def _verdicts(self, observed: Observed, key_id: str | None) -> tuple[list[tuple[Any, str]], list[ContainmentEvent]]:
+        """(call, policy that stopped it) for each call, plus any containment events those blocks
+        triggered. An empty policy means allowed."""
         if self._guard is None or not observed.exchange.calls:
-            return [(call, "") for call in observed.calls]
+            return [(call, "") for call in observed.calls], []
         if not observed.complete:  # an answer we could not fully attribute is never waved through
-            return [(None, "unobserved")]
-        return [(call, self._stopped_by(call)) for call in observed.calls]
+            return [(None, "unobserved")], []
+        verdicts: list[tuple[Any, str]] = []
+        events: list[ContainmentEvent] = []
+        for call in observed.calls:
+            policy, kind = self._stopped_by(call)
+            verdicts.append((call, policy))
+            if policy and self._containment is not None:
+                event = self._containment.observe_block(kind, call.agent, call.tool, key_id)
+                if event is not None:
+                    events.append(event)
+        return verdicts, events
 
-    def _stopped_by(self, call: Any) -> str:
+    def _stopped_by(self, call: Any) -> tuple[str, str]:
+        """(policy id that blocked the call, the finding kind it answers for) — kind feeds
+        containment's escalation decision; both are "" when nothing blocked it."""
+        if self._containment is not None and not self._containment.permits(call.agent, call.tool, call.args):
+            return "containment", "containment"
         for patch in getattr(self._guard, "patches", None) or [self._guard]:
             try:
                 patch.authorize(call.agent, call.tool, call.args)
             except Exception:  # a block, or a guard that failed: either way the call does not go ahead
-                return str(getattr(patch, "id", "") or type(patch).__name__)
-        return ""
+                policy = str(getattr(patch, "id", "") or type(patch).__name__)
+                kind = (getattr(patch, "answers", None) or ("",))[0]
+                return policy, kind
+        return "", ""
 
-    def _record(self, observed: Observed, dialect: Dialect, model: str, verdicts: list, withhold: bool) -> None:
+    def _record(self, observed: Observed, dialect: Dialect, model: str, verdicts: list, withhold: bool,
+               containment_events: list[ContainmentEvent] = ()) -> None:
         if self._ledger is None:
             return
         base = {"mode": "enforce" if self.enforcing else "observe", "agent": observed.agent or "",
@@ -119,6 +156,8 @@ class DecisionPoint:
             events.append(("decision", {**base, "action": "answer", **self._summary(observed.exchange.answer)}))
         events += [("tool_result", {"agent": call.agent, "tool": call.tool, **self._summary(call.result)})
                    for call in observed.results]
+        events += [("containment", {"level": e.level, "agent": e.agent, "tool": e.tool, "kind": e.kind,
+                                    "reason": e.reason}) for e in containment_events]
         try:
             for kind, payload in events:
                 self._ledger.append(ACTOR, kind, payload)
