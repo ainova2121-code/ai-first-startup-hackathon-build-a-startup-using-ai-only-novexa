@@ -35,7 +35,7 @@ from purpleteam.codemods.restore import SourceSnapshots
 from purpleteam.console.events import Broadcaster
 from purpleteam.demo_auth import install_login
 from purpleteam.drift_api import drift_routes
-from purpleteam.live_run import MODES, OPERATOR_DIR, TARGET_REPO, assess, discovery_event, found_events  # noqa: F401
+from purpleteam.live_run import ATTACK_TYPES, MODES, ONLY_STATIC, OPERATOR_DIR, TARGET_REPO, assess, discovery_event, found_events  # noqa: F401
 from purpleteam.run_history import Run, RunStore
 from purpleteam.targets.ledgerpilot import reload_source
 
@@ -51,6 +51,7 @@ class _RunState:
         self.run: Run | None = None  # where this run's evidence is kept
         self.runs: RunStore | None = None  # every run, for the last approved decisions to check against
         self.mode = "full"  # static | full | advanced (purpleteam.live_run)
+        self.attack_type = "all"
 
     def publish(self, payload: dict) -> None:
         self.events.append(payload)
@@ -77,16 +78,26 @@ def create_app(snapshots: SourceSnapshots | None = None, target_repo: Path = TAR
     def index() -> FileResponse:
         return FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"})  # always the current page
 
+    @app.get("/attack-types")
+    def attack_types() -> dict:
+        return {"types": list(ATTACK_TYPES), "adaptive_enabled": not ONLY_STATIC}
+
     @app.post("/run")
-    async def start_run(mode: str = "full") -> dict:
+    async def start_run(mode: str = "full", attack_type: str = "all") -> dict:
         if mode not in MODES:
             raise HTTPException(422, f"mode must be one of {', '.join(MODES)}")
+        if mode == "static" and attack_type != "all":
+            raise HTTPException(422, "Choose Full or Advanced mode to run a selected attack type.")
+        if attack_type not in ATTACK_TYPES:
+            raise HTTPException(422, f"attack_type must be one of {', '.join(ATTACK_TYPES)}")
+        if attack_type in {"redteam", "crescendo", "pair", "tap"} and ONLY_STATIC:
+            raise HTTPException(422, "This PyRIT strategy needs an attacker model; set PURPLETEAM_ONLY_STATIC=0 and configure the attacker model.")
         if state.running:
             raise HTTPException(409, "a run is already in progress")
-        state.running, state.mode = True, mode
+        state.running, state.mode, state.attack_type = True, mode, attack_type
         state.events = []  # a fresh run replays only its own events, never a previous run's
         state.run = runs.new()
-        state.publish({"type": "run_started", "run_id": state.run.id, "mode": mode})
+        state.publish({"type": "run_started", "run_id": state.run.id, "mode": mode, "attack_type": attack_type})
         asyncio.create_task(_execute(state, snapshots))
         return {"started": True, "run_id": state.run.id, "mode": mode}
 
@@ -148,7 +159,8 @@ async def _execute(state: _RunState, snapshots: SourceSnapshots) -> None:
         loop.call_soon_threadsafe(state.publish, payload)
 
     try:
-        await asyncio.to_thread(asyncio.run, assess(state.run, state.runs, snapshots, publish, state.mode))
+        await asyncio.to_thread(asyncio.run, assess(state.run, state.runs, snapshots, publish, state.mode,
+                                                     state.attack_type))
     except Exception as exc:  # a real failure (no LLM key, target unreachable...) must reach the page, not vanish
         if state.run is not None:
             state.run.write_meta(status="error", finished_at=time.time(), detail=str(exc))

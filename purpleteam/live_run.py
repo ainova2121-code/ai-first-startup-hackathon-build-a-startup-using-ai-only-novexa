@@ -22,8 +22,9 @@ from ledgerpilot.utils.config import Settings
 from purpleteam.adapter import TracedTarget
 from purpleteam.assessment import Assessment
 from purpleteam.attack.claims import MODEL_ATTACKS_OFF, ONLY_STATIC, model_free_attacks
+from purpleteam.attack.corpus import action_objective, build_corpus
 from purpleteam.audit.anchor import anchor_trust, freetsa
-from purpleteam.audit.hardware_signer import resolve_signer
+from purpleteam.audit.hardware_signer import SoftwareP256Signer, resolve_signer
 from purpleteam.audit.ledger import AuditLedger
 from purpleteam.codemods.author import groq_complete
 from purpleteam.codemods.catalog import CodemodCatalog
@@ -38,6 +39,7 @@ from purpleteam.sast import BanditScanner
 from purpleteam.targets.ledgerpilot import LedgerPilotTarget, credentials, discover_profile, reload_source
 
 MODES = ("static", "full", "advanced")
+ATTACK_TYPES = ("all", "corpus", "redteam", "crescendo", "pair", "tap")
 LEGIT_INVOICE = "Please process the attached invoice for payment as usual; no account changes are requested."
 ATTEMPT_TIMEOUT = 300  # LedgerPilot's real pipeline is five sequential agent calls per attempt
 HARDWARE_KEY = "live-demo-checkpoint"  # the TPM key this demo signs checkpoints with (PURPLETEAM_HARDWARE_SIGNING)
@@ -89,6 +91,16 @@ def _anchorer() -> Callable[[dict], tuple[dict, list[str]]] | None:
     return lambda trust: anchor_trust(trust, [authority])
 
 
+def resolve_hardware(policy: str):
+    """The checkpoint signer for ``PURPLETEAM_HARDWARE_SIGNING``. ``off``/``preferred``/``required`` are the real
+    hardware policies (purpleteam.audit.hardware_signer). ``software`` signs with a real in-memory P-256 key,
+    labelled "software" -- a genuine, verifiable checkpoint co-signature for a free host with no TPM, never dressed
+    up as hardware. The demo machine keeps "preferred" and signs with its own TPM."""
+    if policy == "software":
+        return resolve_signer("required", HARDWARE_KEY, opener=SoftwareP256Signer)
+    return resolve_signer(policy, HARDWARE_KEY)
+
+
 def _signer_feed(run: Run, publish: Callable[[dict], None], keys: Callable[[], dict]) -> Callable[[dict], None]:
     """Each signed event, published the moment it is on disk, so the page draws the signing flow as it happens.
     Public keys are written as each new signer first signs, so every event verifies before the run is sealed."""
@@ -109,9 +121,11 @@ def _signer_feed(run: Run, publish: Callable[[dict], None], keys: Callable[[], d
 
 
 async def assess(run: Run, runs: RunStore | None, snapshots: SourceSnapshots, publish: Callable[[dict], None],
-                 mode: str = "full") -> None:
+                 mode: str = "full", attack_type: str = "all") -> None:
     if mode not in MODES:
         raise ValueError(f"mode must be one of {', '.join(MODES)}")
+    if attack_type not in ATTACK_TYPES:
+        raise ValueError(f"attack_type must be one of {', '.join(ATTACK_TYPES)}")
     started = time.time()
     load_dotenv()
     reload_source()  # always assess exactly what is on disk now, never a stale import
@@ -123,7 +137,7 @@ async def assess(run: Run, runs: RunStore | None, snapshots: SourceSnapshots, pu
     profile = discover_profile(on_found=lambda agent, tools: [publish(e) for e in found_events(agent, tools)])
     creds = credentials(profile)
     publish(discovery_event(profile, creds))
-    signer, hardware_note = resolve_signer(os.environ.get("PURPLETEAM_HARDWARE_SIGNING", "preferred"), HARDWARE_KEY)
+    signer, hardware_note = resolve_hardware(os.environ.get("PURPLETEAM_HARDWARE_SIGNING", "preferred"))
     anchorer = _anchorer()
     run.write_meta(target=profile.name, mode=mode, hardware=hardware_note, anchoring="freetsa" if anchorer else "off")
     catalog = CodemodCatalog(os.environ.get("PURPLETEAM_CODEMOD_CATALOG", str(OPERATOR_DIR / "codemods")))
@@ -160,14 +174,26 @@ async def assess(run: Run, runs: RunStore | None, snapshots: SourceSnapshots, pu
         # ONLY_STATIC (the demo default): no attacker model, only ``model_free_attacks``; the defender keeps its model
         # for drafting fixes. With the attacker model on, ``full`` uses the targeted attack (it reads each agent's
         # own prompt). ``advanced`` adds disguised and document-buried variants either way.
-        templates = model_free_attacks(profile) if ONLY_STATIC else None if advanced else []
+        selected_strategy = attack_type in {"redteam", "crescendo", "pair", "tap"}
+        if selected_strategy:
+            templates = []
+        elif attack_type == "corpus":
+            templates = build_corpus(action_objective(profile.dangerous_tools))
+        elif ONLY_STATIC:
+            templates = model_free_attacks(profile)
+        elif advanced:
+            templates = None
+        else:
+            templates = []
         # Exposure first: every attack meets the unpatched agent, so the breach count is its real exposure; the
         # defender then patches once and every breaching payload is re-attacked against the patched agent.
         report = await assessment.run(templates, timeout=ATTEMPT_TIMEOUT, untested=[MODEL_ATTACKS_OFF] if ONLY_STATIC else [],
-                                      targeted=not ONLY_STATIC, on_event=publish, exposure_first=True,
-                                      adaptive="tap" if advanced and not ONLY_STATIC else None,  # TAP needs a model
-                                      disguise_with=["base64"] if advanced else None,
-                                      place_with=["buried"] if advanced else None)
+                                      targeted=not ONLY_STATIC and attack_type == "all",
+                                      on_event=publish, exposure_first=True,
+                                      adaptive=(attack_type if selected_strategy and not ONLY_STATIC else
+                                                "tap" if attack_type == "all" and advanced and not ONLY_STATIC else None),
+                                      disguise_with=["base64"] if advanced and attack_type in {"all", "corpus"} else None,
+                                      place_with=["buried"] if advanced and attack_type in {"all", "corpus"} else None)
     finally:
         if signer is not None and hasattr(signer, "close"):
             signer.close()

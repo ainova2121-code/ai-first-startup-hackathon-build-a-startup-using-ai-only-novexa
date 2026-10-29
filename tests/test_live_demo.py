@@ -111,6 +111,11 @@ def test_a_second_run_while_one_is_in_progress_is_refused(tmp_path):
     assert response.status_code == 409
 
 
+def test_run_rejects_unknown_attack_type(tmp_path):
+    response = _client(tmp_path).post("/run?attack_type=not-a-pyrit-technique")
+    assert response.status_code == 422
+
+
 def test_a_run_starts_and_clears_the_in_progress_flag_when_it_finishes(monkeypatch, tmp_path):
     import time
 
@@ -128,7 +133,7 @@ def test_a_run_starts_and_clears_the_in_progress_flag_when_it_finishes(monkeypat
     client = TestClient(app)
     assert client.get("/runs").json()["current"] == run_id
     assert client.get(f"/runs/{run_id}/events").json()["events"][0] == {"type": "run_started", "run_id": run_id,
-                                                                        "mode": "full"}
+                                                                        "mode": "full", "attack_type": "all"}
     assert client.get("/runs/not-a-run/ledger").status_code == 404
     for _ in range(50):
         if seen.get("ran"):

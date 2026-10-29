@@ -248,3 +248,21 @@ def test_the_policy_opens_the_real_tpm_when_it_is_preferred_or_required(tmp_path
         finally:
             if signer:
                 signer.close()
+
+
+def test_the_live_console_can_sign_with_a_software_key_on_a_host_with_no_tpm(tmp_path):
+    """PURPLETEAM_HARDWARE_SIGNING=software gives a free host a real, verifiable checkpoint co-signature, labelled
+    software and never a TPM. off means none; an unknown policy is refused."""
+    from purpleteam.live_run import resolve_hardware
+
+    signer, note = resolve_hardware("software")
+    assert signer is not None and signer.kind == "software" and "software" in note
+    ledger = _ledger(tmp_path, signer, name="soft.jsonl")
+    trust = ledger.export_trust()
+    assert trust["hardware"][trust["checkpoint"]["hwkid"]]["kind"] == "software"  # the truth, not "tpm2"
+    assert ledger.verify(trust).ok  # the signature is genuine and verifies
+    assert not ledger.verify(trust, require_hardware=True).ok  # but software never counts as hardware
+
+    assert resolve_hardware("off") == (None, "hardware signing is off")
+    with pytest.raises(ValueError):
+        resolve_hardware("make-believe")
