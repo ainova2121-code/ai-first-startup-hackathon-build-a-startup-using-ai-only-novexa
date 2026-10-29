@@ -11,7 +11,7 @@ import asyncio
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 from purpleteam.adapter import Observation, ToolCall
-from purpleteam.attack.adaptive import classify_search
+from purpleteam.attack.adaptive import classify_search, run_adaptive
 from purpleteam.attack.outcome import BREACHED, HELD, INCONCLUSIVE
 from purpleteam.attack.pyrit_target import PlatformPromptTarget
 from purpleteam.oracle import CanaryOracle
@@ -104,3 +104,19 @@ def test_the_technique_and_attack_id_are_carried_onto_the_result():
 
     result = asyncio.run(classify_search(wrapper, ORACLE, "pair:0", "PAIR", "objective"))
     assert result.id == "pair:0" and result.technique == "PAIR"
+
+
+def test_existing_redteam_and_crescendo_campaigns_use_the_same_proof_oracle(monkeypatch):
+    from purpleteam.attack import adaptive
+    from purpleteam.attack.runner import CampaignResult
+
+    async def fake_campaign(target, *, objective, strategy, oracle, system_prompt, timeout):
+        return CampaignResult(objective, strategy, False, "no canary observed", "held",
+                              attempts=["attempt"], observations=[_held()])
+
+    monkeypatch.setattr(adaptive, "run_campaign", fake_campaign)
+    for strategy in ("redteam", "crescendo"):
+        result = asyncio.run(run_adaptive(_SequencedTarget([]), ORACLE, "objective", technique=strategy))
+        assert result.technique == strategy.upper()
+        assert result.outcome == HELD
+        assert result.trials == 1

@@ -29,7 +29,15 @@ class _Repository:
         return self._conn.execute(sql, params).lastrowid
 
     def _get(self, table: str, row_id: int) -> Row:
-        row = self._one(f"SELECT * FROM {table} WHERE id = ?", row_id)
+        if table == "emails":
+            query = "SELECT * FROM emails WHERE id = ?"
+        elif table == "invoices":
+            query = "SELECT * FROM invoices WHERE id = ?"
+        elif table == "vendors":
+            query = "SELECT * FROM vendors WHERE id = ?"
+        else:
+            raise ValueError(f"Invalid table name: {table!r}")
+        row = self._one(query, row_id)
         if row is None:
             raise LookupError(f"No row {row_id} in {table}")
         return row
@@ -50,7 +58,7 @@ class VendorRepository(_Repository):
 
     def find_by_name(self, name: str) -> list[Row]:
         # Deliberately injectable: string-built SQL.
-        return self._conn.execute(f"SELECT * FROM vendors WHERE name LIKE '%{name}%'").fetchall()
+        return self._conn.execute("SELECT * FROM vendors WHERE name LIKE ?", ('%'+name+'%',)).fetchall()
 
     def update_bank(self, vendor_id: int, bank_account: str) -> None:
         self._write("UPDATE vendors SET bank_account = ? WHERE id = ?", bank_account, vendor_id)

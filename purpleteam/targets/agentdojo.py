@@ -73,7 +73,12 @@ class AgentDojoTarget:
         self._user_task = self._suite.get_user_task_by_id(user_task_id)
         # Any declared vector works for a generic attack: this just needs one real channel the
         # agent reads untrusted content from, not a specific predefined injection scenario.
-        self._vector = vector or next(iter(self._suite.get_injection_vector_defaults()))
+        vectors = sorted(self._suite.get_injection_vector_defaults())
+        if vector is not None and vector not in vectors:
+            raise ValueError(f"unknown AgentDojo injection vector {vector!r}; choose from {', '.join(vectors)}")
+        if not vectors:
+            raise ValueError(f"AgentDojo suite {suite_name!r} exposes no injection vectors")
+        self._vector = vector or vectors[0]
         # ``pipeline`` is a test seam (a fake with a .query() method) -- real callers never pass it,
         # so the real AgentPipeline (and its real "openai-compatible" provider) is built lazily,
         # never touching the network at construction time, and only once per real run.

@@ -7,6 +7,7 @@ import yaml
 from agentdojo.functions_runtime import FunctionCall
 
 from purpleteam.oracle import CANARY_ACCOUNT, CanaryOracle
+from purpleteam.attack.advanced import tool_output_templates
 from purpleteam.targets.agentdojo import AgentDojoTarget, _yaml_scalar_escape, discover_profile
 
 
@@ -38,8 +39,10 @@ class _FakePipeline:
 
     def __init__(self, tool: str, args: dict, result: str = "ok", reply: str = "Done.") -> None:
         self._tool, self._args, self._result, self._reply = tool, args, result, reply
+        self.environment = None
 
     def query(self, prompt, runtime, env, messages=(), extra_args=None):
+        self.environment = env
         call = FunctionCall(function=self._tool, args=self._args, id="call_1")
         messages = [
             {"role": "user", "content": [{"type": "text", "content": prompt}]},
@@ -63,6 +66,19 @@ def test_send_reports_a_real_canary_reaching_a_dangerous_tools_arguments():
     assert call.tool == "send_email" and CANARY_ACCOUNT in str(call.args) and call.result == "ok"
     oracle = CanaryOracle({CANARY_ACCOUNT}, {"send_email"})
     assert oracle.judge(observation).breached
+
+
+def test_injected_tool_data_is_loaded_into_agentdojo_environment_before_the_agent_runs():
+    [template] = tool_output_templates(discover_profile())[:1]
+    payload = template.render(CANARY_ACCOUNT)
+    pipeline = _FakePipeline("search_emails", {"query": "latest"})
+    target = AgentDojoTarget(pipeline=pipeline)
+
+    target.send(payload)
+
+    # This verifies the indirect-delivery plumbing. Whether the model obeys it is a live assessment
+    # result, not something this adapter test pretends to prove.
+    assert payload in str(pipeline.environment)
 
 
 def test_send_with_no_tool_calls_is_not_a_breach():

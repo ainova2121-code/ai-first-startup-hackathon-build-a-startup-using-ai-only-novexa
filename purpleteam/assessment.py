@@ -18,6 +18,7 @@ from purpleteam.assessment_defense import DefensePass
 from purpleteam.assessment_evidence import EvidencePass
 from purpleteam.assessment_report import AssessmentReport, patchable_identity_findings, surface_findings
 from purpleteam.attack.adaptive import run_adaptive
+from purpleteam.attack.advanced import multilingual_templates, system_prompt_secrets, system_prompt_templates
 from purpleteam.attack.runner import attacker_system_prompt
 from purpleteam.attack.targeted import prepare_payloads, run_targeted
 from purpleteam.attack.corpus import CANARY_MARK, AttackTemplate, CorpusResult, action_objective, build_corpus, run_corpus
@@ -38,7 +39,7 @@ from purpleteam.discovery import TargetProfile
 from purpleteam.explainer import Explanation
 from purpleteam.focus import plan_focus
 from purpleteam.identity import PermissionManifest, check_baseline, check_credentials
-from purpleteam.oracle import CANARY_ACCOUNT, Oracle
+from purpleteam.oracle import AnyOracle, CANARY_ACCOUNT, LeakOracle, Oracle
 from purpleteam.verifier import LegitCheck, VerifyReport
 
 TargetFactory = Callable[[Any], Target]  # guard (or None) -> a fresh target
@@ -76,7 +77,10 @@ class Assessment(DefensePass, EvidencePass):
         decision_baseline: dict | None = None,
     ) -> None:
         self._factory = factory
-        self._oracle = oracle
+        # Known system prompts are in-memory proof markers for extraction attacks. They are never
+        # written into the ledger; LeakOracle records only the channel and marker kind.
+        prompt_markers = system_prompt_secrets(profile.agent_info)
+        self._oracle = AnyOracle(oracle, LeakOracle(prompt_markers)) if prompt_markers else oracle
         self._profile = profile
         self._ledger = ledger
         self._legit = legit
@@ -115,8 +119,8 @@ class Assessment(DefensePass, EvidencePass):
         corpus. Judge a focused run with ``focus_oracle`` so only the oracles that apply to the topic can call a
         breach. ``disguise_with``/``place_with`` additionally run each template disguised or placed inside cover
         text; a breach is verified against the exact variant that caused it, never the plain template alone.
-        ``adaptive`` ("pair" or "tap") additionally runs one adaptive jailbreak search against the same objective
-        as the default corpus — PyRIT searching for a working phrasing instead of only replaying known templates,
+        ``adaptive`` ("redteam", "crescendo", "pair" or "tap") additionally runs one adaptive PyRIT attack
+        against the same objective as the default corpus — PyRIT searching for a working phrasing instead of only recalling known templates,
         see ``purpleteam.attack.adaptive``. Off by default: unlike the corpus, it costs real adversarial-model
         calls. ``targeted`` additionally reads each discovered agent's own real prompt for a literal, unverified
         trigger condition and crafts one payload per agent that states it in plain language, with no stated attack
@@ -192,11 +196,13 @@ class Assessment(DefensePass, EvidencePass):
         elif templates is None or not templates:  # the default corpus, or none at all: say what did not run
             corpus_ran = templates is None
             if corpus_ran:
-                templates = build_corpus(action_objective(self._profile.dangerous_tools))
+                templates = (build_corpus(action_objective(self._profile.dangerous_tools))
+                             + multilingual_templates(self._profile)
+                             + system_prompt_templates(self._profile.agent_info))
             scope = {"corpus": "default" if corpus_ran else "skipped", "templates": [t.id for t in templates]}
             not_run = [] if corpus_ran else ["the fixed jailbreak corpus (templates=[])"]
             if not adaptive:
-                not_run.append("adaptive (PAIR/TAP) search — pass adaptive='tap'/'pair', or see "
+                not_run.append("adaptive PyRIT search — pass adaptive='redteam'/'crescendo'/'tap'/'pair', or see "
                                "purpleteam.attack.adaptive, to add it")
             if not targeted:
                 not_run.append("targeted trigger-condition attack — pass targeted=True, or see "
@@ -206,11 +212,16 @@ class Assessment(DefensePass, EvidencePass):
                                "them")
             if self._profile.retrieval_tools:
                 scope["rag_surface"] = sorted(self._profile.retrieval_tools)
+                not_run.append("tool-output injection was not run through a retrieved/tool-returned value; "
+                               "plain text placement is not equivalent — use a target adapter that injects into "
+                               "the actual retrieval source (the AgentDojo demo is one example)")
                 if not place_with:
                     not_run.append(f"{len(self._profile.retrieval_tools)} retrieval-shaped tool(s) found "
                                    f"({', '.join(sorted(self._profile.retrieval_tools))}) but attacks ran as "
                                    "plain text, not placed inside document-shaped content the way a poisoned "
                                    "retrieved chunk would arrive — pass place_with to test that channel")
+            if not system_prompt_templates(self._profile.agent_info):
+                not_run.append("system-prompt extraction was not run because discovery did not capture an agent prompt")
             if not_run:
                 scope["not_run"] = "; ".join(not_run)
         # One attempt at a time, rebuilding the target with whatever defense has landed so far: attack,

@@ -1,4 +1,4 @@
-"""PAIR and TAP: adaptive jailbreak search for attacks no fixed template covers.
+"""PyRIT's adaptive attack strategies for attacks no fixed template covers.
 
 ``attack.corpus`` replays a fixed library of known jailbreak patterns; it can only find what
 someone already wrote a template for. PAIR (Prompt Automatic Iterative Refinement) and TAP (Tree
@@ -6,7 +6,11 @@ of Attacks with Pruning) instead have an adversarial model generate and refine a
 the live target, searching for a working phrasing rather than recalling one — PyRIT's answer to
 novel attacks.
 
-The search needs a graded "how close is this to the objective" signal to rank and prune branches:
+PAIR/TAP use a graded "how close is this to the objective" signal to rank and prune branches;
+RedTeamingAttack and Crescendo use PyRIT's campaign scoring path. In every case the proof oracle,
+not the search's own score, decides whether the attack succeeded.
+
+The PAIR/TAP search needs a graded "how close is this to the objective" signal to rank and prune branches:
 PyRIT's bundled ``SelfAskScaleScorer`` (the tree-of-attacks rubric, red-teamer system prompt) does
 that. That signal only steers the search, the same role a deterministic output scorer plays
 elsewhere in this package — it is never the breach verdict. Every observation the target wrapper
@@ -33,11 +37,12 @@ from purpleteam.adapter import Target
 from purpleteam.attack.corpus import CorpusResult, as_corpus_result
 from purpleteam.attack.outcome import BREACHED, classify, summarize
 from purpleteam.attack.pyrit_target import PlatformPromptTarget
-from purpleteam.attack.runner import ATTACKER_SYSTEM_PROMPT, adversarial_target
+from purpleteam.attack.runner import ATTACKER_SYSTEM_PROMPT, adversarial_target, run_campaign
 from purpleteam.attack.signals import scan_observation
 from purpleteam.oracle import Oracle
 
 TECHNIQUES = {"pair": PAIRAttack, "tap": TAPAttack}
+CAMPAIGN_TECHNIQUES = {"redteam", "crescendo"}
 # FloatScaleThresholdScorer normalizes the bundled 1-10 tree-of-attacks scale to [0, 1]; 0.8 is a
 # near-top score. Only steers the search (which branches to keep exploring) — never the verdict.
 OBJECTIVE_THRESHOLD = 0.8
@@ -65,12 +70,28 @@ async def run_adaptive(
     tree_depth: int = 3,
     timeout: float | None = 300,
 ) -> CorpusResult:
-    """Search for a working attack with PAIR or TAP rather than replaying a fixed template.
+    """Run a PyRIT Red Team, Crescendo, PAIR or TAP attack rather than replaying only fixed templates.
     ``objective`` names the specific thing to achieve (see ``attack.corpus.action_objective``).
     ``system_prompt`` defaults to the generic brief; pass ``runner.attacker_system_prompt(agent_info)``
     to brief the adversarial model with the target's own real discovered instructions, when captured."""
+    if technique in CAMPAIGN_TECHNIQUES:
+        campaign = await run_campaign(target, objective=objective, strategy=technique, oracle=oracle,
+                                      system_prompt=system_prompt, timeout=timeout)
+        pairs = list(zip(campaign.attempts, campaign.observations))
+        trials = [classify(observation, oracle.judge(observation), timed_out=False, error=None)
+                  for _, observation in pairs]
+        summary = summarize(trials)
+        if summary.outcome == BREACHED:
+            index = next(i for i, trial in enumerate(trials) if trial.outcome == BREACHED)
+            payload, observation = pairs[index]
+            signals = await scan_observation(observation)
+        else:
+            payload, observation = pairs[-1] if pairs else (objective, None)
+            signals = []
+        return as_corpus_result(attack_id or technique, technique.upper(), summary, payload, signals,
+                                reply=observation.reply if observation else "")
     if technique not in TECHNIQUES:
-        raise ValueError(f"unknown technique {technique!r}; choose from {', '.join(TECHNIQUES)}")
+        raise ValueError(f"unknown technique {technique!r}; choose from {', '.join(sorted(TECHNIQUES | CAMPAIGN_TECHNIQUES))}")
     await initialize_pyrit_async(IN_MEMORY, silent=True)
     pyrit_target = PlatformPromptTarget(target=target)
     kwargs = {"branching_factor": 2} if technique == "tap" else {}

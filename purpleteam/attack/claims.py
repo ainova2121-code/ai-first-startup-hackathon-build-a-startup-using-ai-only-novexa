@@ -17,6 +17,7 @@ from __future__ import annotations
 import os
 
 from purpleteam.attack.corpus import CANARY_MARK, AttackTemplate, action_objective, build_corpus
+from purpleteam.attack.advanced import multilingual_templates, system_prompt_templates
 from purpleteam.attack.placement import place
 from purpleteam.discovery import VALUE_SLOT, TargetProfile  # the values an outsider could plant
 
@@ -52,4 +53,5 @@ def model_free_attacks(profile: TargetProfile) -> list[AttackTemplate]:
     claims = claim_templates(profile)
     delivered = [AttackTemplate(f"{t.id.rsplit(':', 1)[0]}:{name}", technique, place(t.body, name))
                  for t in claims if t.id.endswith(":1") for name, technique in DELIVERIES.items()]
-    return claims + delivered + build_corpus(action_objective(profile.dangerous_tools))
+    return (claims + delivered + multilingual_templates(profile) + system_prompt_templates(profile.agent_info)
+            + build_corpus(action_objective(profile.dangerous_tools)))

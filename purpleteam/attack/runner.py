@@ -19,7 +19,7 @@ from pyrit.executor.attack import (
 from pyrit.prompt_target import OpenAIChatTarget
 from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
-from purpleteam.adapter import Target
+from purpleteam.adapter import Observation, Target
 from purpleteam.attack.outcome import BREACHED, HELD, INCONCLUSIVE
 from purpleteam.attack.pyrit_scorer import OracleScorer
 from purpleteam.attack.pyrit_target import PlatformPromptTarget
@@ -65,6 +65,7 @@ class CampaignResult:
     detail: str
     outcome: str = ""  # breached | held | inconclusive (see purpleteam.attack.outcome)
     attempts: list[str] = field(default_factory=list)
+    observations: list[Observation] = field(default_factory=list)
 
 
 def adversarial_target(model: str | None = None) -> OpenAIChatTarget:
@@ -91,6 +92,7 @@ async def run_campaign(
     objective: str,
     strategy: str = "redteam",
     canaries: set[str] | None = None,
+    oracle: Oracle | None = None,
     dangerous_tools: set[str] | None = None,
     max_turns: int = 5,
     adversarial_model: str | None = None,
@@ -99,7 +101,7 @@ async def run_campaign(
 ) -> CampaignResult:
     await initialize_pyrit_async(IN_MEMORY, silent=True)
     pyrit_target = PlatformPromptTarget(target=target)
-    oracle = CanaryOracle(canaries or {CANARY_ACCOUNT}, dangerous_tools)
+    oracle = oracle or CanaryOracle(canaries or {CANARY_ACCOUNT}, dangerous_tools)
     scorer = OracleScorer(target=pyrit_target, oracle=oracle)
 
     attack = STRATEGIES[strategy](
@@ -120,7 +122,7 @@ async def run_campaign(
     breached, detail, outcome = _campaign_outcome(pyrit_target, oracle, completed=completed)
     return CampaignResult(
         objective=objective, strategy=strategy, breached=breached, detail=detail,
-        outcome=outcome, attempts=pyrit_target.attempts,
+        outcome=outcome, attempts=pyrit_target.attempts, observations=pyrit_target.observations,
     )
 
 
