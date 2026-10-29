@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Sign in - purpleteam console{% endblock %}
+{% block content %}
+<h1>purpleteam console</h1>
+<div class="card">
+    <form method="post" action="/login">
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" required autofocus>
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" required>
+        <button type="submit">Sign in</button>
+        {% if error %}<div class="error">{{ error }}</div>{% endif %}
+    </form>
+</div>
+{% endblock %}

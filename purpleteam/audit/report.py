@@ -34,6 +34,7 @@ def render(report) -> str:
     sections = [
         _header(report),
         _verification_instructions(report),
+        _scorecard(report),
         _boundary_compliance(report),
         _findings(report),
         _coverage(report),
@@ -82,6 +83,38 @@ def _verification_instructions(report) -> str:
         f"  - Checkpoint: size={checkpoint['size']}, root=`{checkpoint['root']}`, "
         f"signed at {checkpoint['ts']}{anchored_note}"
     )
+
+
+def _scorecard(report) -> str:
+    """The run's own mathematics, not a vibe: a Wilson 95%-confidence ceiling on the true breach rate for
+    every attack that did not breach (see ``purpleteam.attack.outcome``), and, when ``blast=`` was supplied,
+    each agent's blast-radius score (see ``purpleteam.blast``) — a weighted combination of the specific
+    chains found on it, not an opinion. A breached attack has no bound to show: the bound is a statement
+    about trials that found nothing, and this one already answered the question."""
+    if not report.results and not report.blast:
+        return ""
+    rows = ["## Scorecard", "",
+           "Every number below traces to a formula over this run's own evidence; none of it is asserted.", ""]
+    if report.results:
+        rows += ["### Attack confidence (Wilson 95%)", "",
+                 "| Attack | Technique | Outcome | Breach-rate ceiling |", "|---|---|---|---|"]
+        for r in report.results:
+            if r.outcome == "breached":
+                ceiling = "proven — no bound applies"
+            elif r.outcome == "held":
+                ceiling = f"≤ {r.upper_bound * 100:.0f}% at 95% confidence ({r.conclusive} trial(s))"
+            else:
+                ceiling = "not tested (inconclusive)"
+            rows.append(f"| {r.id} | {r.technique} | {r.outcome or '-'} | {ceiling} |")
+        rows.append("")
+    agents = report.blast.get("agents") if report.blast else None
+    if agents:
+        rows += ["### Blast radius (0-100; higher = further an attacker could reach if this agent were compromised)",
+                 "", "| Agent | Its own tools | + shared credentials / hand-offs |", "|---|---|---|"]
+        for a in agents:
+            rows.append(f"| {a['agent']} | {a['score']} | {a['reach']} |")
+        rows.append("")
+    return "\n".join(rows).rstrip()
 
 
 def _boundary_compliance(report) -> str:

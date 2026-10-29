@@ -10,6 +10,7 @@ dependencies = [
     "pydantic-settings>=2.4",
     "langchain>=1.0",
     "langchain-openai>=1.0",
+    "langchain-huggingface>=0.1",
     "langgraph>=1.0",
     "pypdf>=5.0",
     "fonttools>=4.50",
@@ -25,11 +26,23 @@ dev = [
 # torch is llm-guard's own dependency, not ours — listed explicitly only so tool.uv.sources below
 # actually applies to it (uv does not reliably redirect a purely transitive package's index).
 platform = ["pyrit>=1.1", "httpx>=0.27", "sqlglot>=25.0", "cryptography>=48.0", "rfc3161-client==1.0.9", "bandit>=1.7",
-           "llm-guard>=0.3", "torch>=2.14"]
+           "llm-guard>=0.3", "torch>=2.14",
+           # JavaScript in n8n Code nodes is parsed, never run (purpleteam.n8n): a real grammar, not regexes.
+           "tree-sitter==0.25.2", "tree-sitter-javascript==0.25.0"]
 # The LLM gateway's own runtime: no pyrit/bandit (attack/SAST-time only, not needed by a standing
 # service). llm-guard is included because P2 (prompt-injection screening) is a real runtime guard.
 gateway = ["httpx>=0.27", "sqlglot>=25.0", "cryptography>=48.0", "rfc3161-client==1.0.9", "llm-guard>=0.3",
           "torch>=2.14"]
+# The fleet console: a separate service from the gateway, so no sqlglot/llm-guard/torch here --
+# it never screens traffic itself, only polls gateways' /ledger/export and renders the result.
+console = ["httpx>=0.27", "cryptography>=48.0", "jinja2>=3.1"]
+# A second, third-party target the platform attacks with zero changes to AgentDojo's own code
+# (ethz-spylab/agentdojo, pip-installed, never vendored/cloned into this repo) -- proof the
+# platform is domain-agnostic against something it did not build itself, not just LedgerPilot.
+# Pinned to a commit past the PyPI release (0.1.35) because only this revision has the
+# "openai-compatible" provider purpleteam/targets/agentdojo.py needs -- still entirely their own,
+# unmodified code, just a newer point in their own history than what is on PyPI yet.
+agentdojo = ["agentdojo"]
 
 [build-system]
 requires = ["hatchling"]
@@ -48,6 +61,9 @@ link-mode = "copy"
 # that resolves to the default CUDA-enabled wheel — several GB of NVIDIA runtime libraries no
 # gateway container has a GPU to use. The CPU-only build is the same package, just without them.
 torch = [{ index = "pytorch-cpu" }]
+# See the agentdojo dependency-group comment above: pinned past the PyPI release for the
+# "openai-compatible" provider, which 0.1.35 does not yet have.
+agentdojo = { git = "https://github.com/ethz-spylab/agentdojo", rev = "089ed468cf3ed0322acc66b0211f26d9d90dbf60" }
 
 [[tool.uv.index]]
 name = "pytorch-cpu"

@@ -41,6 +41,19 @@ _EXECUTE_ARGS = {"sql", "query", "code", "command", "cmd", "script", "expression
 _CLASS_VERBS = ((_EXECUTE_VERBS, "execute"), (_DELETE_VERBS, "delete"),
                 (_EXTERNAL_VERBS, "external"), (_WRITE_VERBS, "write"), (_READ_VERBS, "read"))
 
+# A retrieval surface: a tool whose result is free-text content handed back to the model, which can carry
+# an injected instruction — the RAG threat model, named behaviorally rather than by any one vector store or
+# framework (Pinecone, pgvector, LlamaIndex, a hand-rolled grep over files all look the same from here: a
+# tool whose job is "fetch content, not a fact"). Orthogonal to risk — almost every retrieval tool is READ —
+# so it is its own field, not folded into risk.
+_RETRIEVAL_WORDS = {"search", "retrieve", "retrieval", "query", "lookup", "find", "knowledge", "context",
+                    "embed", "embedding", "similarity", "similar", "document", "documents", "corpus",
+                    "index", "kb", "rag", "vector", "chunk", "chunks", "passage", "passages"}
+# A memory surface: a tool that *persists* content the model (or a later session) will read back -- the
+# write side of the RAG threat: whatever lands here can poison every future conversation that recalls it.
+_MEMORY_WORDS = {"memory", "memories", "memorize", "memorise", "remember", "note", "notes", "scratchpad",
+                 "upsert", "persist", "embed", "embedding", "vector", "knowledge", "kb", "index"}
+
 
 def load_callable(ref: str) -> Any:
     """``"pkg.module:attr"`` -> the attribute."""
@@ -57,6 +70,12 @@ def _tokens(text: str) -> list[str]:
 
 
 name_tokens = _tokens  # the words in a tool or agent name, for code that reasons about what a name suggests
+# Words in a read tool's name saying it takes in outside content -- written by someone the system does not control.
+CHANNEL_WORDS = {"email", "mail", "message", "chat", "web", "url", "page", "document", "file", "upload", "attachment",
+                 "ticket", "comment", "feed", "inbox", "webhook", "request", "input", "form"}
+# An argument naming where something goes or who it names: the values an outsider would want to plant.
+VALUE_SLOT = re.compile(r"(account|iban|bank|payee|recipient|beneficiary|destination|address|e?mail|url|phone|"
+                        r"approver|owner|wallet|name)$", re.IGNORECASE)
 
 
 def _words(*texts: str) -> set[str]:
@@ -77,6 +96,8 @@ class DiscoveredTool:
     tool: Any = field(repr=False, default=None)
     agent_name: str = ""  # set when the tool was seen being given to a named agent
     risk_by: str = "name"  # "name": guessed from the tool's name; "operator": set by a person
+    retrieval: bool = False  # a RAG-shaped surface: content it returns can carry an injected instruction
+    memory: bool = False  # a memory-write surface: content it stores can poison every later recall
 
     @property
     def dangerous(self) -> bool:
@@ -120,6 +141,25 @@ class TargetProfile:
     @property
     def dangerous_tools(self) -> set[str]:
         return {t.name for t in self.tools if t.dangerous}
+
+    @property
+    def retrieval_tools(self) -> set[str]:
+        return {t.name for t in self.tools if t.retrieval}
+
+    @property
+    def memory_tools(self) -> set[str]:
+        return {t.name for t in self.tools if t.memory}
+
+    @property
+    def outside_content_readers(self) -> set[str]:
+        """Read tools whose names say they take in outside content: an email, a message, a page, a file."""
+        return {t.name for t in self.tools if t.risk in (READ, EXTERNAL) and set(_tokens(t.name)) & CHANNEL_WORDS}
+
+    @property
+    def value_args(self) -> dict[str, set[str]]:
+        """Each dangerous tool's destination or identity arguments (``VALUE_SLOT``), for the tools that have any."""
+        found = {t.name: {a for a in t.args if VALUE_SLOT.search(a)} for t in self.tools if t.dangerous}
+        return {tool: args for tool, args in found.items() if args}
 
     @property
     def agents(self) -> set[str]:
@@ -171,8 +211,37 @@ def classify_risk(name: str, description: str, args: dict[str, dict]) -> str:
     return WRITE
 
 
+def is_retrieval_surface(name: str, description: str) -> bool:
+    """Behavioral, not vendor-specific: any tool whose name or description reads as "fetch content from
+    somewhere" is a RAG-shaped surface, regardless of what backs it (a vector DB, a search index, a plain
+    file grep). Same false-positive tradeoff as ``classify_risk``: missing one hides a real injection
+    channel from the RAG-focused report, so the word list leans wide."""
+    return bool(_words(name, description) & _RETRIEVAL_WORDS)
+
+
+def is_memory_surface(name: str, description: str, risk: str) -> bool:
+    """A tool that can change the world (not read-only) and reads as "store this for later". A read-only
+    tool cannot plant anything, however memory-shaped its name; the word list leans wide, as above."""
+    return risk != READ and bool(_words(name, description) & _MEMORY_WORDS)
+
+
+def _unwrap(fn: Any, name: str) -> Any:
+    """Where a tool is really defined, not the wrapper around it: a guard or middleware commonly
+    wraps every tool in one shared function that closes over the original, which would otherwise
+    make every tool appear to live at that one wrapper line."""
+    for cell in getattr(fn, "__closure__", None) or ():
+        try:
+            inner = cell.cell_contents
+        except ValueError:  # an empty cell
+            continue
+        if callable(inner) and getattr(inner, "__name__", "") == name:
+            return inner
+    return getattr(fn, "__wrapped__", fn)
+
+
 def _source_of(tool: Any) -> str:
     fn = getattr(tool, "func", None) or getattr(type(tool), "_run", None)
+    fn = _unwrap(fn, getattr(tool, "name", ""))
     try:
         return f"{Path(inspect.getsourcefile(fn)).name}:{inspect.getsourcelines(fn)[1]}"
     except (TypeError, OSError):
@@ -183,9 +252,12 @@ def describe_tool(tool: Any, *, module: str = "", agent_name: str = "") -> Disco
     """Record a LangChain tool's name, arguments and risk (the one place a ``DiscoveredTool`` is built)."""
     description = (tool.description or "").strip()
     args = dict(tool.args)
+    risk = classify_risk(tool.name, description, args)
     return DiscoveredTool(
         name=tool.name, description=description, args=args, source=_source_of(tool),
-        risk=classify_risk(tool.name, description, args), module=module, tool=tool, agent_name=agent_name,
+        risk=risk, module=module, tool=tool, agent_name=agent_name,
+        retrieval=is_retrieval_surface(tool.name, description),
+        memory=is_memory_surface(tool.name, description, risk),
     )
 
 

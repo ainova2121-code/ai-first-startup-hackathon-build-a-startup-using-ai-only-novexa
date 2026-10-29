@@ -13,11 +13,15 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from purpleteam.adapter import OBSERVED, PROPOSED, REPORTED
-from purpleteam.discovery import EXECUTE, TargetProfile
+from purpleteam.defender.containment import ContainmentLevel, escalate
+from purpleteam.discovery import TargetProfile
 from purpleteam.identity import PermissionManifest
+from purpleteam.oversight import HumanReviewGate, ReviewQueue
 from purpleteam.patches.base import CompositeGuard, Patch
 from purpleteam.patches.catalog import FINDING_PATCHES, GLOBAL_PATCHES, PATCH_SUMMARY
-from purpleteam.patches.rules import AgentScopeGuard, ArgumentAllowlist, EgressGuard, SqlFirewall, ToolGate
+from purpleteam.patches.provenance import ProvenanceGuard
+from purpleteam.patches.rules import (
+    AgentScopeGuard, ArgumentAllowlist, EgressGuard, LoopGuard, MemoryWriteGuard, SqlFirewall)
 from purpleteam.patches.scanners import InjectionScanner, OutputRedactor, injection_backend_available
 from purpleteam.secrets import SecretFinder
 
@@ -50,18 +54,36 @@ class Defense:
     applied: list[dict] = field(default_factory=list)  # {id, hash, summary} for the audit trail
 
 
-class Defender:
-    """Selects catalog patches for a finding and composes them into a guard."""
+# What each escalation level adds when the previous one still let a replay through.
+ESCALATIONS = ("the catalog patches for each finding",
+               "hold every side-effecting tool of each breaching agent, not just the one that breached",
+               "deny the breached tool to the breaching agent outright")
 
-    def __init__(self, profile: TargetProfile, facts: dict | None = None) -> None:
+
+class Defender:
+    """Selects catalog patches for a finding and composes them into a guard. ``review_queue``
+    backs every P4 hold (durable by default when given a path; an ephemeral in-process queue when
+    omitted, so a caller that never wired one up still gets a working P4, just not one that
+    survives a restart — see ``purpleteam.oversight``). ``escalation`` (an index into
+    ``ESCALATIONS``) tightens the defense when a verified replay showed the lighter one failing;
+    it only ever narrows what the breaching agents may do, never another agent's tools."""
+
+    def __init__(self, profile: TargetProfile, facts: dict | None = None,
+                review_queue: ReviewQueue | None = None, escalation: int = 0,
+                exclude: frozenset[str] = frozenset()) -> None:
         self._profile = profile
         self._facts = facts or {}
         self._mode = self._facts.get("mode", "staging")
         if self._mode not in MODES:
             raise ValueError(f"facts['mode'] must be one of {MODES}")
+        if not 0 <= escalation < len(ESCALATIONS):
+            raise ValueError(f"escalation must be between 0 and {len(ESCALATIONS) - 1}")
+        self._review_queue = review_queue if review_queue is not None else ReviewQueue()
+        self._escalation = escalation
+        self._exclude = exclude  # patches a verified replay proved break legitimate work (see assessment)
 
     def select(self, finding: Finding) -> Defense:
-        ids = FINDING_PATCHES.get(finding.kind, [])
+        ids = [pid for pid in FINDING_PATCHES.get(finding.kind, []) if pid not in self._exclude]
         built = [(pid, self._build(pid, finding)) for pid in ids]
         patches = [patch for _, patch in built if patch is not None]
         applied = [{"id": pid, "hash": patch.code_hash(), "summary": PATCH_SUMMARY[pid]}
@@ -71,35 +93,70 @@ class Defender:
                        mode=self._mode, applied=applied)
 
     def select_all(self, findings: list[Finding]) -> Defense:
-        """One defense for several findings; a patch is applied once per target or per tool."""
+        """One defense for several findings; a patch is applied once per target, or once per
+        (agent, tool) for P4 (never merging across agents — see ``_scope_key``), or once per tool
+        for the rest."""
         merged: dict[tuple, tuple[dict, Patch]] = {}
         rationale: list[str] = []
         for finding in findings:
             defense = self.select(finding)
             rationale.append(defense.rationale)
             for entry, patch in zip(defense.applied, defense.guard.patches):
-                scope = None if entry["id"] in GLOBAL_PATCHES else finding.tool
-                merged.setdefault((entry["id"], scope), (entry, patch))
+                merged.setdefault((entry["id"], self._scope_key(entry["id"], finding)), (entry, patch))
+        denied = sorted({(f.agent, f.tool) for f in findings if f.tool and f.source == "dynamic"})
+        if self._escalation >= 2 and denied and "P11" not in self._exclude:
+            manifest = self._manifest()
+            for agent, tool in denied:
+                manifest = escalate(ContainmentLevel.TOOL_DENIED, agent, tool, manifest)
+            patch = AgentScopeGuard(manifest)
+            names = ", ".join(f"{agent}.{tool}" for agent, tool in denied)
+            merged[("P11", None)] = ({"id": "P11", "hash": patch.code_hash(),
+                                      "summary": f"{PATCH_SUMMARY['P11']} — denied: {names}"}, patch)
+            rationale.append(f"escalated: {names} denied")
         entries = [entry for entry, _ in merged.values()]
         guard = CompositeGuard([patch for _, patch in merged.values()])
         return Defense([e["id"] for e in entries], guard, "; ".join(rationale), mode=self._mode, applied=entries)
 
+    def _scope_key(self, patch_id: str, finding: Finding) -> tuple | str | None:
+        if patch_id in GLOBAL_PATCHES:
+            return None
+        if patch_id == "P4":
+            # Agent-bound: a breach on one agent's tool call must never cause a merge that lets
+            # a different agent's same-named tool share the hold/approval (see oversight.py).
+            return (finding.agent, finding.tool)
+        return finding.tool
+
     def _build(self, patch_id: str, finding: Finding) -> Patch | None:
+        if not finding.tool and patch_id not in GLOBAL_PATCHES:
+            # A source-level finding names a line, not a tool: a tool-scoped guard on tool "" would
+            # guard nothing while still reading as "patched". Its only real fix is a source edit.
+            return None
         if patch_id == "P2":
             return InjectionScanner() if injection_backend_available() else None
         if patch_id == "P4":
-            return ToolGate(self._profile.dangerous_tools | {finding.tool})
+            scope = {(finding.agent, finding.tool)}
+            if self._escalation >= 1:  # this agent is proven manipulable: every side effect it has waits
+                scope |= {(finding.agent, t.name) for t in self._profile.tools
+                          if t.agent == finding.agent and t.dangerous}
+            return HumanReviewGate(scope, self._review_queue)
         if patch_id == "P5":
             allowed, arg = self._facts.get("verified_values"), self._facts.get("verified_arg")
             return ArgumentAllowlist(finding.tool, arg, set(allowed)) if allowed and arg else None  # operator-supplied
         if patch_id == "P8":
-            return SqlFirewall(self._sql_tools(finding), tables=self._facts.get("tables"))
+            return self._sql_firewall(finding)
         if patch_id == "P9":
             return OutputRedactor(self._finder(_SECRET_PATTERNS))
         if patch_id == "P10":
             return EgressGuard(None, self._finder())
         if patch_id == "P11":
             return AgentScopeGuard(self._manifest())
+        if patch_id == "P12":
+            scanner = InjectionScanner() if injection_backend_available() else None
+            return MemoryWriteGuard(self._profile.memory_tools | {finding.tool}, self._finder(), scanner)
+        if patch_id == "P13":
+            return LoopGuard()
+        if patch_id == "P14":
+            return ProvenanceGuard(self._profile.outside_content_readers, self._profile.value_args)
         return None
 
     def _manifest(self) -> PermissionManifest:
@@ -115,9 +172,15 @@ class Defender:
         """Known secrets come from the caller's facts (``facts["secrets"]``); formats are always on."""
         return SecretFinder(known=self._facts.get("secrets", ()), extra_patterns=extra_patterns)
 
-    def _sql_tools(self, finding: Finding) -> set[str]:
-        execute_tools = {t.name for t in self._profile.tools if t.risk == EXECUTE}
-        return execute_tools | {finding.tool}
+    def _sql_firewall(self, finding: Finding) -> Patch | None:
+        """Only the tool the finding actually named — never every ``EXECUTE``-risk tool in the
+        whole profile, which swept shell/code tools with no SQL to parse into the same firewall
+        and simply blocked them outright (gap: a tool with no ``sql`` argument can never parse as
+        one valid SELECT, so it always fails closed, for the wrong, confusing reason). Even
+        without ``facts["tables"]``, this still blocks every non-SELECT and multi-statement query;
+        supplying it additionally scopes which tables a SELECT may name, which is still worth
+        doing but is not the only thing standing between this and an unrestricted query tool."""
+        return SqlFirewall({finding.tool}, arg=self._facts.get("sql_arg", "sql"), tables=self._facts.get("tables"))
 
 
 _EVIDENCE_STRENGTH = {PROPOSED: 1, REPORTED: 2, OBSERVED: 3}  # weakest first, matching adapter.py's own ordering

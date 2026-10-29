@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Deploy {{ name }} - purpleteam console{% endblock %}
+{% block content %}
+<h1>{{ name }} is registered — now deploy its gateway</h1>
+<div class="card" style="max-width: 760px">
+    <p class="muted">Paste this into a shell on the host where <strong>{{ name }}</strong>'s gateway will run.
+        It writes <code>.env.gateway</code> with both bearer keys and a redactor secret already generated, then
+        starts the gateway behind Caddy's automatic TLS. The moment it's up, this console can poll it — nothing
+        to copy out of a log, nothing to paste back in here.</p>
+    <pre class="codeblock" id="deployScript">{{ plan.script }}</pre>
+    <button type="button" onclick="navigator.clipboard.writeText(document.getElementById('deployScript').textContent)">
+        Copy
+    </button>
+    <p class="warn">Fill in <code>GATEWAY_OPENAI_KEY</code> (or ANTHROPIC/GEMINI) with your own provider key before
+        running this — the platform never sees that key.</p>
+</div>
+<div class="card" style="max-width: 760px">
+    <h2>Hand this to the team that owns the agent</h2>
+    <p class="muted">Point their OpenAI-compatible <code>base_url</code> at <span class="mono">{{ plan.base_url }}</span>
+        and its API key at the value below. Shown once — the console does not store this one.</p>
+    <pre class="codeblock mono">{{ plan.target_key }}</pre>
+</div>
+<p><a href="/targets">&larr; Back to targets</a></p>
+{% endblock %}

@@ -15,7 +15,7 @@ from typing import Any, Awaitable, Callable
 
 from purpleteam.attack.outcome import Trial, classify
 from purpleteam.attack.pyrit_target import PlatformPromptTarget
-from purpleteam.oracle import Oracle
+from purpleteam.oracle import Oracle, persuasion
 
 
 async def run_attempt(execute: Callable[[], Awaitable[Any]], target: PlatformPromptTarget, oracle: Oracle,
@@ -30,4 +30,6 @@ async def run_attempt(execute: Callable[[], Awaitable[Any]], target: PlatformPro
     except Exception as failure:  # rate limits, a refused connection, a tooling error: none of them is "held"
         error = type(failure).__name__
     observation = target.last_observation
-    return classify(observation, oracle.judge(observation) if observation else None, timed_out=timed_out, error=error)
+    verdict = oracle.judge(observation) if observation else None
+    persuaded = persuasion(oracle, observation) if verdict is not None and not verdict.breached else None
+    return classify(observation, verdict, timed_out=timed_out, error=error, persuaded=persuaded)

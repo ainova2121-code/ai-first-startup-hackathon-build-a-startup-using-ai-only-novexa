@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "live-demo",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "uvicorn", "--factory", "purpleteam.live_demo:app", "--port", "8090"],
+      "port": 8090
+    }
+  ]
+}

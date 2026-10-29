@@ -28,7 +28,7 @@ import time
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
+from typing import Callable, Iterator
 
 from purpleteam.audit.hashing import GENESIS, canonical, event_hash, inclusion_path, merkle_root
 from purpleteam.audit.hardware_signer import PROTECTIONS, HardwareSigner, SignerError, key_id, verify_p256
@@ -66,10 +66,13 @@ class LedgerCorrupt(Exception):
 class AuditLedger:
     def __init__(self, path: str | Path, keyring: AgentKeyring | None = None, redactor=None, *,
                  log_id: str | None = None, pinned_checkpoint: dict | None = None,
-                 hardware: HardwareSigner | None = None, pinned_hardware: dict | None = None) -> None:
+                 hardware: HardwareSigner | None = None, pinned_hardware: dict | None = None,
+                 on_append: Callable[[dict], None] | None = None) -> None:
         """``pinned_checkpoint`` (a checkpoint published earlier) makes a restart refuse a truncated or rewritten log;
         if it carries a hardware signature, ``pinned_hardware`` (the ``hardware`` part of its trust bundle) lets a
-        machine without that key check it too."""
+        machine without that key check it too. ``on_append`` is called with each event once it is signed and on
+        disk, so a live viewer can show every signature the moment it happens."""
+        self._on_append = on_append
         if log_id is not None and not is_hex("log", log_id):
             raise ValueError("log_id must be 32 lowercase hex characters")
         if hardware is not None and (getattr(hardware, "kind", None) not in PROTECTIONS
@@ -115,7 +118,13 @@ class AuditLedger:
                 handle.flush()
                 os.fsync(handle.fileno())
             self._sync()
+        if self._on_append is not None:
+            self._on_append(event)
         return event
+
+    def public_keys(self) -> dict:
+        """Every actor's public signing keys so far: enough to verify each event before the log is sealed."""
+        return self._keyring.public_keys()
 
     def events(self) -> list[dict]:
         if not self.path.exists():
@@ -129,6 +138,11 @@ class AuditLedger:
         with self._locked():
             self._sync()
             return len(self._hashes)
+
+    @property
+    def log_id(self) -> str | None:
+        """This ledger's fixed id (every event and checkpoint carries it); ``None`` until the first append."""
+        return self._log_id
 
     def seal(self) -> str:
         with self._locked():

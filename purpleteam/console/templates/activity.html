@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}{{ target.name }} activity - purpleteam console{% endblock %}
+{% block content %}
+<a href="/targets/{{ target.id }}" class="muted">&larr; {{ target.name }}</a>
+<h1>Raw activity</h1>
+{% if fetch_error %}
+<p class="error">Could not fetch a live view: {{ fetch_error }}</p>
+{% elif not activity %}
+<p class="muted">No decision or containment events on this ledger yet.</p>
+{% else %}
+<table>
+    <thead><tr><th>Seq</th><th>Kind</th><th>Agent</th><th>Detail</th></tr></thead>
+    <tbody>
+        {% for event in activity | reverse %}
+        <tr>
+            <td class="mono">{{ event.seq }}</td>
+            <td><span class="badge {{ 'breach' if event.payload.verdict in ('blocked', 'withheld') or event.kind == 'containment' else 'held' }}">{{ event.kind }}</span></td>
+            <td class="mono">{{ event.payload.agent }}</td>
+            <td class="mono">{{ event.payload }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+{% endblock %}

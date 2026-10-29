@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Targets - purpleteam console{% endblock %}
+{% block content %}
+<h1>Targets</h1>
+<table>
+    <thead><tr><th>Name</th><th>Base URL</th><th>Status</th><th>Log id</th><th></th></tr></thead>
+    <tbody>
+        {% for target in targets %}
+        <tr>
+            <td>{{ target.name }}</td>
+            <td class="mono">{{ target.base_url }}</td>
+            <td><span class="badge {{ target.status }}">{{ target.status }}</span></td>
+            <td class="mono">{{ (target.log_id or "-")[:12] }}</td>
+            <td>
+                <form class="inline" method="post" action="/targets/{{ target.id }}/remove"
+                      data-target-name="{{ target.name }}"
+                      onsubmit="return confirm('Remove ' + this.dataset.targetName + ' from the fleet?');">
+                    <button type="submit" class="danger">Remove</button>
+                </form>
+            </td>
+        </tr>
+        {% else %}
+        <tr><td colspan="5" class="muted">No targets registered yet.</td></tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+{% if error %}<div class="error">{{ error }}</div>{% endif %}
+
+<div style="display: flex; gap: 20px; flex-wrap: wrap">
+<section class="card">
+    <h2>Deploy a new gateway</h2>
+    <p class="muted">For a target with no gateway yet. Generates both bearer keys and a ready-to-run
+        self-host command — nothing to copy out of a log.</p>
+    <form method="post" action="/targets/deploy">
+        <label for="deploy-name">Name</label>
+        <input id="deploy-name" name="name" required>
+        <label for="domain">Domain</label>
+        <input id="domain" name="domain" placeholder="gateway.acme.example (or localhost)" required>
+        <button type="submit">Generate deploy command</button>
+    </form>
+</section>
+
+<section class="card">
+    <h2>Register an existing gateway</h2>
+    <p class="muted">For a gateway that's already running — paste in its base URL and admin key.</p>
+    <form method="post" action="/targets">
+        <label for="name">Name</label>
+        <input id="name" name="name" required>
+        <label for="base_url">Base URL</label>
+        <input id="base_url" name="base_url" placeholder="https://gateway.customer.example" required>
+        <label for="admin_key">Admin bearer key</label>
+        <input id="admin_key" name="admin_key" type="password" required>
+        <button type="submit">Add target</button>
+    </form>
+</section>
+</div>
+{% endblock %}

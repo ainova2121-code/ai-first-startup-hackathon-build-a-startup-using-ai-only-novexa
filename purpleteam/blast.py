@@ -33,12 +33,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Iterable
 
-from purpleteam.discovery import DELETE, EXECUTE, EXTERNAL, READ, WRITE, DiscoveredTool, TargetProfile, name_tokens
+from purpleteam.discovery import DELETE, EXECUTE, EXTERNAL, READ, WRITE, DiscoveredTool, TargetProfile
 from purpleteam.identity import PermissionManifest, check_credentials
 
 SEVERITY = {"critical": 90, "high": 70, "medium": 40, "low": 15}  # also the order chains are listed in
-_CHANNEL_WORDS = {"email", "mail", "message", "chat", "web", "url", "page", "document", "file", "upload", "attachment",
-                  "ticket", "comment", "feed", "inbox", "webhook", "request", "input", "form"}
 _LOWER = {"critical": "high", "high": "medium", "medium": "low", "low": "low"}
 _FIX = {
     "unbounded_execution": "replace it with fixed, parameterised operations, or hold every call for approval",
@@ -150,8 +148,7 @@ def blast_radius(profile: TargetProfile, *, manifest: PermissionManifest | None 
     if unknown := sorted({a for pair in edges for a in pair} - set(held)):
         raise ValueError(f"hand-offs name agents that were not found: {', '.join(unknown)}")
     guessed = untrusted is None
-    ingest = ({t.name for t in profile.tools if t.risk in (READ, EXTERNAL) and set(name_tokens(t.name)) & _CHANNEL_WORDS}
-              if guessed else set(untrusted))
+    ingest = profile.outside_content_readers if guessed else set(untrusted)
     if missing := sorted(ingest - names):
         raise ValueError(f"untrusted names tools that were not found: {', '.join(missing)}")
     credentials = check_credentials(credentials or {})

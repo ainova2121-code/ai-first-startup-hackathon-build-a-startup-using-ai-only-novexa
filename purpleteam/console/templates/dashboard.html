@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Fleet - purpleteam console{% endblock %}
+{% block content %}
+<h1>Fleet</h1>
+{% if not rows %}
+<p class="muted">No targets registered yet.{% if session.role == "admin" %} <a href="/targets">Add one</a>.{% endif %}</p>
+{% else %}
+<table id="fleet-table" hx-ext="sse" sse-connect="/stream">
+    <thead>
+        <tr><th>Target</th><th>Status</th><th>Events</th><th>Latest run</th><th>Sealed</th><th></th></tr>
+    </thead>
+    <tbody>
+        <tr style="display:none" sse-swap="fleet-update"></tr>
+        {% for row in rows %}
+            {% with target = row.target, status = row.status %}{% include "_target_row.html" %}{% endwith %}
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+{% endblock %}

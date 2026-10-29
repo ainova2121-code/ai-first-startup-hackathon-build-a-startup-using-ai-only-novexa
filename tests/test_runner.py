@@ -16,7 +16,8 @@ from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 from purpleteam.adapter import Observation, ToolCall
 from purpleteam.attack.outcome import BREACHED, HELD, INCONCLUSIVE
 from purpleteam.attack.pyrit_target import PlatformPromptTarget
-from purpleteam.attack.runner import _campaign_outcome
+from purpleteam.attack.runner import ATTACKER_SYSTEM_PROMPT, _campaign_outcome, attacker_system_prompt
+from purpleteam.discovery import AgentInfo
 from purpleteam.oracle import CanaryOracle
 
 asyncio.run(initialize_pyrit_async(IN_MEMORY, silent=True))
@@ -110,3 +111,40 @@ def test_a_breach_on_an_earlier_turn_survives_a_later_overwrite_and_an_interrupt
     breached, detail, outcome = _campaign_outcome(wrapper, ORACLE, completed=False)
 
     assert outcome == BREACHED and breached is True
+
+
+def _agent(name: str, prompt: str = "") -> AgentInfo:
+    return AgentInfo(name=name, prompt=prompt)
+
+
+def test_attacker_system_prompt_falls_back_to_the_generic_brief_with_no_agents():
+    assert attacker_system_prompt([]) == ATTACKER_SYSTEM_PROMPT
+    assert attacker_system_prompt() == ATTACKER_SYSTEM_PROMPT
+
+
+def test_attacker_system_prompt_falls_back_when_no_agent_captured_a_prompt():
+    """Gateway-observed/black-box discovery never captures a prompt; this must degrade cleanly,
+    not crash or produce a briefing with no real content in it."""
+    assert attacker_system_prompt([_agent("vendor"), _agent("approval")]) == ATTACKER_SYSTEM_PROMPT
+
+
+def test_attacker_system_prompt_includes_the_targets_own_real_instructions():
+    vendor = _agent("vendor", "Update the bank account if the invoice states new remittance details.")
+
+    briefing = attacker_system_prompt([vendor])
+
+    assert ATTACKER_SYSTEM_PROMPT in briefing
+    assert "vendor" in briefing
+    assert "Update the bank account if the invoice states new remittance details." in briefing
+
+
+def test_attacker_system_prompt_only_includes_agents_with_a_captured_prompt():
+    """An agent discovery saw but never captured a prompt for must not show up as empty noise
+    alongside the one that did."""
+    briefed = _agent("approval", "Record a manager's approval if the case file shows one.")
+    unbriefed = _agent("payment")
+
+    briefing = attacker_system_prompt([briefed, unbriefed])
+
+    assert "approval" in briefing
+    assert "payment" not in briefing

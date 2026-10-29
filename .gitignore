@@ -70,6 +70,7 @@ web_modules/
 .env.*
 !.env.example
 !.env.gateway.example
+!.env.console.example
 
 # gateway deployment: real secrets and host-specific config, never the committed templates
 /deploy/secrets/
@@ -150,6 +151,8 @@ vite.config.ts.timestamp-*
 
 # LedgerPilot runtime database
 data/*.db
+# Operator-owned platform state: approved codemods and snapshots of edited target source.
+/.purpleteam/
 
 # uv.lock is committed on purpose: it pins every dependency by hash.
 .venv/
@@ -163,6 +166,9 @@ purpleteam/**/*.c
 purpleteam/**/*.so
 purpleteam/**/*.pyd
 purpleteam/**/*.html
+# ...but hand-written pages and templates are source, not Cython output.
+!purpleteam/live_demo_static/*.html
+!purpleteam/console/templates/*.html
 build/
 *.egg-info/
 

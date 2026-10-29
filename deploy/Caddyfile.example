@@ -1,9 +1,22 @@
-# Copy to deploy/Caddyfile and set your real domain — Caddy then provisions and renews a TLS
-# certificate for it automatically (Let's Encrypt), no further configuration needed.
+# Copy to deploy/Caddyfile and set your real domain(s) — Caddy then provisions and renews a TLS
+# certificate for each automatically (Let's Encrypt), no further configuration needed.
 #
-# Trying it locally with no domain yet? Set GATEWAY_DOMAIN=localhost in .env.gateway instead:
-# Caddy issues itself a local, self-signed certificate for that case.
+# Trying it locally with no domain yet? Set GATEWAY_DOMAIN=localhost (and/or
+# CONSOLE_DOMAIN=localhost) in the matching .env file instead: Caddy issues itself a local,
+# self-signed certificate for that case.
+#
+# Gateway only, no console: delete the whole second block below.
 
 {$GATEWAY_DOMAIN} {
 	reverse_proxy gateway:8080
+}
+
+{$CONSOLE_DOMAIN} {
+	# /stream is Server-Sent Events: an open connection that never completes on its own.
+	# flush_interval -1 pushes each chunk to the browser immediately instead of buffering it,
+	# which is what actually makes the dashboard update live rather than only on reload.
+	reverse_proxy /stream console:8081 {
+		flush_interval -1
+	}
+	reverse_proxy console:8081
 }

@@ -58,9 +58,15 @@ class LiveContainment:
         to ``tool`` violates the policy. Escalates automatically for the two levels that only ever
         narrow access or revoke a credential. Returns the event to log — including for
         ``held_for_review``, which changes nothing automatically but must still be seen — or
-        ``None`` only when ``credential_revoked`` had no keyring, key id, or live key to act on."""
+        ``None`` only when ``credential_revoked`` had no keyring, key id, or live key to act on, or
+        when this pair is already ``tool_denied``: repeating a call against a door already fully
+        closed is not a new, distinct breach, so it must not count toward revoking the credential —
+        only a genuinely different breach (another tool, a fresh resource-rule violation, an
+        identity-kind finding) should ever push the count toward REPEAT_THRESHOLD."""
         with self._lock:
             key = (agent, tool)
+            if key in self._denied:
+                return None
             prior = self._breaches.get(key, 0)
             self._breaches[key] = prior + 1
             level = decide(kind, agent, tool, self._declared, prior_breaches=prior, relied_on=relied_on)

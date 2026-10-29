@@ -12,7 +12,8 @@ from purpleteam.identity import PermissionManifest, inventory
 from purpleteam.oracle import CANARY_ACCOUNT, CanaryOracle, LeakOracle, ScopeOracle
 from purpleteam.targets.endpoint import HttpTarget
 from test_assessment import ATTACK, _assess, _looked_up  # noqa: E402  (helpers shared with the assessment tests)
-from test_gateway import TOKEN, _call, _gateway, _obedient_model, _product, _request  # noqa: E402
+from test_gateway import TOKEN, _call, _gateway, _request  # noqa: E402
+from test_gateway_http_product import _obedient_model, _product  # noqa: E402
 
 
 def _answer(*calls):

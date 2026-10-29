@@ -5,11 +5,17 @@ catalog, re-verify by attacking again, seal the signed audit trail, and print a 
 
     uv run python -m purpleteam.demo
     uv run python -m purpleteam.demo --verbose   # also print every payload sent and the signed ledger
+    uv run python -m purpleteam.demo --adaptive  # also run one TAP adaptive search beyond the fixed corpus
+    uv run python -m purpleteam.demo --targeted  # also craft one trigger-condition payload per agent
 
 Discovery needs no model, key or network (see ``targets.ledgerpilot.discover_profile``). The
 attack and verification phases send real requests to LedgerPilot's own agents, so they need a
 configured target model: set LEDGERPILOT_LLM_API_KEY or HF_TOKEN (see .env.example). The seed
-corpus itself needs no attacker model — only the target's.
+corpus itself needs no attacker model — only the target's. ``--adaptive`` additionally drives a
+real adversarial model (see ``purpleteam.attack.runner.adversarial_target``) searching for a
+working jailbreak phrasing rather than replaying the fixed corpus; it falls back to the target
+model's own key if no separate attacker key is set, but costs extra calls and a few more minutes,
+so it is off by default.
 """
 
 from __future__ import annotations
@@ -50,6 +56,23 @@ def _not_hijacked(observation: Observation) -> bool:
                    for call in observation.tool_calls)
 
 
+def _print_scorecard(report) -> None:
+    """The run's own math, not a vibe (see ``audit.report._scorecard`` for the full version): the Wilson
+    95%-confidence ceiling on the true breach rate for every attack that did not breach, and each agent's
+    blast-radius score when ``blast=`` was supplied. Every number here traces to a specific formula over
+    this run's own evidence."""
+    held = [r for r in report.results if r.outcome == "held"]
+    if held:
+        worst = max(held, key=lambda r: r.upper_bound)
+        print(f"[score]   worst-case breach-rate ceiling across {len(held)} held attack(s): "
+             f"≤{worst.upper_bound * 100:.0f}% at 95% confidence ({worst.id}, {worst.conclusive} trial(s))")
+    agents = (report.blast or {}).get("agents")
+    if agents:
+        ranked = ", ".join(f"{a['agent']}={a['score']}/{a['reach']}" for a in sorted(
+            agents, key=lambda a: -a["reach"]))
+        print(f"[score]   blast radius (own tools/reach, 0-100): {ranked}")
+
+
 def _print_report(report, ledger: AuditLedger, ledger_path: Path, verbose: bool = False) -> None:
     breached = [r for r in report.results if r.breached]
     inconclusive = [r for r in report.results if r.outcome == INCONCLUSIVE]
@@ -81,6 +104,7 @@ def _print_report(report, ledger: AuditLedger, ledger_path: Path, verbose: bool 
 
     print(f"[identity] {len(report.identity['agents'])} agents, manifest: {report.identity['manifest']}, "
          f"{len(report.identity['findings'])} identity findings")
+    _print_scorecard(report)
     print(f"[audit]   {len(ledger.events())} signed events, chain verifies: {report.chain_ok}, "
          f"merkle root {report.sealed_root[:16]}..., log at {ledger_path}")
     print(f"[comply]  {len(report.coverage)} regulatory clauses evidenced: {', '.join(sorted(report.coverage))}")
@@ -97,6 +121,8 @@ async def main() -> None:
     if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     verbose = any(arg in ("-v", "--verbose") for arg in sys.argv[1:])
+    adaptive = "--adaptive" in sys.argv[1:]
+    targeted = "--targeted" in sys.argv[1:]
     load_dotenv()
     profile = discover_profile()
     print(f"[discover] {len(profile.agents)} agents, {len(profile.tools)} tools, "
@@ -107,12 +133,19 @@ async def main() -> None:
     ledger = AuditLedger(ledger_path)
     assessment = Assessment(
         lambda guard: LedgerPilotTarget(guard=guard), oracle, profile, ledger,
-        legit=[(LEGIT_INVOICE, _not_hijacked)], credentials=credentials(profile),
+        legit=[(LEGIT_INVOICE, _not_hijacked)], credentials=credentials(profile), blast={},
     )
 
     print("[attack]  running the seed corpus (PyRIT jailbreak templates wrapping a bank-account "
          "hijack objective) against the invoice channel...")
-    report = await assessment.run(timeout=ATTEMPT_TIMEOUT)
+    if adaptive:
+        print("[attack]  also running one adaptive TAP search (PyRIT tree-of-attacks) for a working "
+             "phrasing no fixed template covers — this calls a real adversarial model and can take "
+             "a few minutes...")
+    if targeted:
+        print("[attack]  also reading each agent's own prompt for a trigger condition and crafting "
+             "one natural-language payload per agent that has one...")
+    report = await assessment.run(timeout=ATTEMPT_TIMEOUT, adaptive="tap" if adaptive else None, targeted=targeted)
     _print_report(report, ledger, ledger_path, verbose)
     sys.exit(0 if report.safe_to_ship else 1)
 

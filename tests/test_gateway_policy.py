@@ -105,7 +105,10 @@ def test_a_declared_resource_rule_is_enforced_live_even_if_no_patch_checks_it():
     assert not containment.permits("vendor", "update_vendor_bank", {"country": "FR"})
 
 
-def test_a_repeat_offender_gets_its_credential_revoked():
+def test_repeating_the_identical_blocked_call_never_revokes_the_credential():
+    """The bug this guards against: once a pair is tool_denied, it is already fully closed, so an
+    agent (or an attacker trying to force a revocation as a denial-of-service against it) replaying
+    the exact same call must not rack up further "breaches" — only a genuinely distinct breach may."""
     manifest = PermissionManifest({"vendor": frozenset({"update_vendor_bank"})})
     keys = GatewayKeys()
     token = keys.issue("vendor-key", "target", ttl_seconds=3600, max_requests=1000, agent="vendor")
@@ -116,14 +119,30 @@ def test_a_repeat_offender_gets_its_credential_revoked():
     decisions = DecisionPoint(_FakeObserver([_call()]), guard=_FakeGuard(patch), ledger=ledger,
                               containment=containment)
 
-    decisions.process(_FakeDialect(), {}, {}, None, "gpt", identity="vendor", key_id=key_id)  # 1st: tool_denied
-    decisions.process(_FakeDialect(), {}, {}, None, "gpt", identity="vendor", key_id=key_id)  # 2nd: still denied
-    assert keys.is_active(key_id)
-    decisions.process(_FakeDialect(), {}, {}, None, "gpt", identity="vendor", key_id=key_id)  # 3rd: revoked
+    for _ in range(5):  # the exact same call, repeated well past the old threshold
+        decisions.process(_FakeDialect(), {}, {}, None, "gpt", identity="vendor", key_id=key_id)
 
-    assert not keys.is_active(key_id)
+    assert keys.is_active(key_id)
     levels = [p["level"] for _, k, p in ledger.events if k == "containment"]
-    assert levels == ["tool_denied", "tool_denied", "credential_revoked"]
+    assert levels == ["tool_denied"]  # only the first attempt was new evidence of anything
+
+
+def test_repeated_distinct_resource_violations_on_the_same_tool_still_revoke():
+    """Unlike an identical repeat of an already-closed tool, a declared resource rule being
+    violated again and again -- a live, enforced boundary getting hit repeatedly -- is still
+    genuine evidence, so it still reaches REPEAT_THRESHOLD and revokes, same as before the fix."""
+    manifest = PermissionManifest.from_dict(
+        {"vendor": [{"tool": "update_vendor_bank", "arg": "country", "values": ["US"]}]})
+    keys = GatewayKeys()
+    token = keys.issue("vendor-key", "target", ttl_seconds=3600, max_requests=1000, agent="vendor")
+    key_id = token.split("_", 2)[1]
+    containment = LiveContainment(manifest, keys)
+
+    levels = [containment.observe_block("injection_action", "vendor", "update_vendor_bank", key_id).level
+             for _ in range(3)]
+
+    assert levels == ["resource_denied", "resource_denied", "credential_revoked"]
+    assert not keys.is_active(key_id)
 
 
 def test_without_containment_configured_nothing_changes():

@@ -20,15 +20,75 @@ from ledgerpilot.ports import EventSink, Guard, NoGuard, NullSink
 from ledgerpilot.utils.config import Settings
 
 
+_CHANNEL_TAG = "<|channel|>"
+_HARMONY_RETRIES = 4
+
+
+def _is_harmony_tool_name_error(error: Exception) -> bool:
+    return isinstance(error, APIStatusError) and _CHANNEL_TAG in str(error)
+
+
+class _HarmonySafeChatOpenAI(ChatOpenAI):
+    """Some providers (observed on Groq's openai/gpt-oss-20b) sometimes generate a tool call whose
+    own name is corrupted with OpenAI's "harmony" response format's channel tag -- e.g.
+    "find_duplicates<|channel|>commentary" instead of "find_duplicates" -- and Groq's own server
+    rejects that generation outright (400, code "tool_use_failed") before any usable response
+    reaches this client at all, regardless of what the request asked for (reproduced on a clean,
+    non-adversarial baseline, so this is not an attack-detection concern). A known, provider-side
+    issue (langchain-ai/langchain#32765), not specific to this codebase, and not something a
+    client-side parser fix can touch, since there is no successful response to parse -- the
+    generation is rejected server-side. The model's output is not fully deterministic even at
+    temperature=0 on Groq's hosted inference, so a retry can succeed where the first attempt did
+    not; this retries only this one, specifically-identified failure, not errors in general."""
+
+    def _generate(self, *args, **kwargs):
+        last = None
+        for _ in range(_HARMONY_RETRIES):
+            try:
+                return super()._generate(*args, **kwargs)
+            except Exception as error:  # noqa: BLE001 -- re-raised unchanged unless it matches
+                if not _is_harmony_tool_name_error(error):
+                    raise
+                last = error
+        raise last
+
+    async def _agenerate(self, *args, **kwargs):
+        last = None
+        for _ in range(_HARMONY_RETRIES):
+            try:
+                return await super()._agenerate(*args, **kwargs)
+            except Exception as error:  # noqa: BLE001 -- re-raised unchanged unless it matches
+                if not _is_harmony_tool_name_error(error):
+                    raise
+                last = error
+        raise last
+
+
 def chat_model(settings: Settings) -> BaseChatModel:
+    if settings.llm_provider == "local":
+        return _local_chat_model(settings.llm_model)
     if not settings.llm_api_key.get_secret_value():
         raise RuntimeError("Set HF_TOKEN or LEDGERPILOT_LLM_API_KEY to reach the model endpoint.")
-    return ChatOpenAI(
+    return _HarmonySafeChatOpenAI(
         model=settings.llm_model,
         base_url=settings.llm_base_url,
         api_key=settings.llm_api_key,
-        temperature=0,
+        temperature=settings.llm_temperature,
+        reasoning_effort=settings.llm_reasoning_effort,
     )
+
+
+def _local_chat_model(model_id: str) -> BaseChatModel:
+    """A model run entirely on this machine (transformers/torch, already a base dependency) --
+    no network call, no API key, no rate limit. Imported lazily so the normal OpenAI-compatible
+    path never pays for loading transformers/torch at startup."""
+    from langchain_huggingface import ChatHuggingFace, HuggingFacePipeline
+
+    pipeline = HuggingFacePipeline.from_model_id(
+        model_id=model_id, task="text-generation",
+        pipeline_kwargs={"max_new_tokens": 512, "temperature": 0.7, "do_sample": True, "return_full_text": False},
+    )
+    return ChatHuggingFace(llm=pipeline)
 
 
 def create_app(

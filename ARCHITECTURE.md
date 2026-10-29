@@ -1,6 +1,6 @@
 # PurpleTeam system architecture
 
-This describes the current repository implementation. It separates the deployable LLM gateway, the Python assessment engine, the LedgerPilot demo target, and release/audit trust. The gateway Compose stack is deployable on its own; the assessment engine is currently driven from Python rather than a packaged management UI.
+This describes the current repository implementation. It separates the deployable LLM gateway, the Python assessment engine, the live console that drives it, the LedgerPilot demo target, and release/audit trust. The gateway Compose stack is deployable on its own; the assessment engine runs from the live console (section 5), from `purpleteam.assess` for another agent repository, or directly from Python.
 
 ## 1. Customer deployment and model traffic
 
@@ -108,7 +108,7 @@ flowchart TD
   Compliance --> Report
 ```
 
-Default assessment runs use the seed corpus. PAIR/TAP is a separately callable adaptive attack runner, not automatically invoked by the default `Assessment.run`. Static repository scanning, baseline comparison, regression replay, blast-radius analysis, disguises, and placement variants are optional inputs or modes. The oracle—not the adaptive scorer—decides whether evidence proves a breach. A selected runtime guard is attached through the target adapter and then verified by replaying attacks and legitimate requests.
+`Assessment.run` with no templates uses the seed corpus; the live console passes its own model-free set instead (section 5). PAIR/TAP is a separately callable adaptive attack runner, not automatically invoked by the default `Assessment.run`. Static repository scanning, baseline comparison, regression replay, blast-radius analysis, disguises, and placement variants are optional inputs or modes. The oracle—not the adaptive scorer—decides whether evidence proves a breach. A selected runtime guard is attached through the target adapter and then verified by replaying attacks and legitimate requests.
 
 ## 3. LedgerPilot demonstration target
 
@@ -190,10 +190,35 @@ flowchart LR
 
 The TPM/HSM/KMS key adds a signature to checkpoints; it does not attest the host, prove the container is unmodified, or sign every event. The gateway image’s Cosign signature is a separate release-integrity mechanism. Timestamp anchoring is optional and proves a checkpoint existed by the timestamp, not that the contents are truthful.
 
+## 5. Live console: one run, end to end
+
+```mermaid
+flowchart TD
+  Browser[Browser\nsigned in with the access code]
+  Console[Live console\nFastAPI + server-sent events]
+  Discover[Discovery\nagents, tools, prompts fingerprinted]
+  Attack[Every attack against the unpatched agent, in parallel\nrule-written claims, claims in a document or form field,\nPyRIT jailbreak / injection / social-engineering]
+  Oracle[Proof-based oracle\ncanary reached a dangerous tool, and where it spread]
+  Legit[Legitimate work checked alone first\na patch that breaks it is dropped]
+  Defend[Defender selects runtime guards]
+  Fix[Verified source fixes\nrescan + invariant, snapshotted, restorable]
+  Reload[Edited target reloaded]
+  Replay[Every breaching payload re-attacked x3\nrelease gate on the residual breach rate]
+  Seal[Signed ledger\nper-event Ed25519 + ML-DSA-65, Merkle checkpoint,\nTPM P-256, RFC 3161 timestamp]
+
+  Browser --> Console --> Discover --> Attack --> Oracle
+  Oracle --> Fix --> Reload --> Legit --> Defend --> Replay --> Seal
+  Discover -. each event as it happens .-> Browser
+  Oracle -. each event as it happens .-> Browser
+  Seal -. each signature as it is made .-> Browser
+```
+
+`purpleteam.live_run` composes the run; `purpleteam.live_demo` serves it behind `purpleteam.demo_auth`. In the default (`PURPLETEAM_ONLY_STATIC`) the attacker uses no model; the defender's model only drafts source fixes. Each signed event is pushed to the page and verified against its signer's public key before the run is sealed; the checkpoint at the end signs the Merkle root of them all.
+
 ## Current boundaries
 
-- The Compose deployment packages the gateway and Caddy. The assessment engine is Python-driven; there is no customer onboarding UI or one-click assessment console yet.
+- The Compose deployment packages the gateway and Caddy. The live console is a single-operator tool behind one access code (`deploy/azure_windows.ps1` hosts it); the multi-user fleet console watches gateways, not assessments.
 - External HTTP targets use `HttpTarget`; framework-neutral model observation depends on traffic routed through the gateway. The current repository does not include a packaged remote assessment client that automatically coordinates a separately deployed gateway’s `/profile` endpoint with the assessment runner.
 - The current provider dialects are OpenAI-compatible, Anthropic, and Gemini. There is no dedicated RAG/vector-database or MCP security subsystem in this repository.
-- The defender selects prewritten runtime guards. The separate codemod workflow may draft and verify a source change on a scratch copy, but it does not silently rewrite customer source code.
-- The Windows TPM implementation signs ledger checkpoints. It is not TPM remote attestation. The hardware detector notes that WSL2 does not expose the host TPM to the Linux environment.
+- The defender selects prewritten runtime guards. Verified source codemods are applied to the configured target repository (catalog-approved, or model-drafted and auto-approved only when the rescan and the independent invariant both pass, labelled as not human-reviewed); every original is snapshotted and one restore reverts them all.
+- The Windows TPM implementation signs ledger checkpoints. It is not TPM remote attestation. On an Azure Trusted Launch VM the TPM is virtual (protected by Azure's host). The hardware detector notes that WSL2 does not expose the host TPM to the Linux environment.

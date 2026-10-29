@@ -49,6 +49,23 @@ _NONE = hashlib.sha256(b"").digest()  # stands in for a missing key so a wrong i
 Audit = Callable[[str, dict], None]
 
 
+def generate_token() -> str:
+    """A fresh, correctly-shaped bearer token, usable later as ``GatewayKeys.issue(..., token=...)``'s
+    pinned value -- for a caller (a fleet console) that must already know a gateway's bootstrap
+    credential before that gateway has ever booted, so it can poll the moment it does."""
+    # Keep the secret segment free of underscores so the public token shape remains exactly
+    # ``ptgw_<id>_<secret>``; hex retains the full 256 bits of entropy without delimiter ambiguity.
+    return f"{PREFIX}_{secrets.token_hex(4)}_{secrets.token_hex(32)}"
+
+
+def _parse_token(token: str) -> tuple[str, str]:
+    prefix, _, rest = token.partition("_")
+    key_id, _, secret = rest.partition("_")
+    if prefix != PREFIX or not key_id or not secret:
+        raise ValueError(f"token must look like {PREFIX}_<id>_<secret>")
+    return key_id, secret
+
+
 class AuthError(Exception):
     def __init__(self, status: int, reason: str, key_id: str = "unknown") -> None:
         super().__init__(reason)
@@ -145,9 +162,11 @@ class GatewayKeys:
                 self._keys[key_id] = key
 
     def issue(self, label: str, role: str, *, ttl_seconds: float, max_requests: int, per_minute: int = 120,
-              agent: str | None = None) -> str:
+              agent: str | None = None, token: str | None = None) -> str:
         """A new key as a bearer token. It is shown once: only its digest is kept. ``agent`` binds a target key
-        to one agent's identity."""
+        to one agent's identity. ``token`` (from ``generate_token()``) pins the exact bearer value instead of
+        minting a random one -- for a caller that must already know it before this process starts (a fleet
+        console pre-generating a gateway's bootstrap credential); still only its digest is ever kept here."""
         if role not in ROLES or not _LABEL.fullmatch(label or ""):
             raise ValueError(f"role must be one of {', '.join(ROLES)} and the label 1-64 plain characters")
         if agent is not None and (role != TARGET or not valid_name(agent)):
@@ -161,10 +180,15 @@ class GatewayKeys:
                 del self._keys[i]  # forget the dead
             if len(self._keys) >= MAX_KEYS:
                 raise ValueError(f"at most {MAX_KEYS} live keys")
-            key_id = secrets.token_hex(4)
-            while key_id in self._keys:
+            if token is not None:
+                key_id, secret = _parse_token(token)
+                if key_id in self._keys:
+                    raise ValueError(f"key id {key_id!r} is already in use")
+            else:
                 key_id = secrets.token_hex(4)
-            secret = secrets.token_urlsafe(32)
+                while key_id in self._keys:
+                    key_id = secrets.token_hex(4)
+                secret = secrets.token_urlsafe(32)
             self._keys[key_id] = _Key(_digest(secret), label, role, now + ttl_seconds, max_requests, per_minute,
                                       agent, tokens=float(per_minute), stamp=now)
         if self._store is not None:
@@ -173,7 +197,7 @@ class GatewayKeys:
             self._store.save(key_id, self._record_dict(key_id))
         self._record("key_issued", {"key_id": key_id, "label": label, "role": role, "agent": agent or "",
                                     "expires": now + ttl_seconds, "max_requests": max_requests, "per_minute": per_minute})
-        return f"{PREFIX}_{key_id}_{secret}"
+        return token if token is not None else f"{PREFIX}_{key_id}_{secret}"
 
     def is_active(self, key_id: str | None) -> bool:
         """Whether a key is still valid right now (not revoked, not expired). Costs nothing: no budget or rate is used.

@@ -1,0 +1,52 @@
+# syntax=docker/dockerfile:1
+#
+# The fleet console: a separate service from the gateway, installing only the "console"
+# dependency group (no sqlglot/llm-guard/torch -- the console never screens traffic itself, only
+# polls each registered gateway's /ledger/export over HTTP and renders the result). No compiler
+# stage: unlike the gateway's crown-jewel modules (see Dockerfile.gateway), nothing here is
+# compiled/protected yet.
+#
+# This container speaks plain HTTP. It MUST sit behind a TLS-terminating load balancer, ingress or
+# sidecar -- session cookies and every registered gateway's admin key would otherwise cross the
+# network in the clear. purpleteam.console.main refuses to start without
+# CONSOLE_TLS_TERMINATED_UPSTREAM=true confirming that is in place.
+#
+# Build:  docker build -f Dockerfile.console -t purpleteam-console .
+# Run:    docker run --rm -p 8081:8081 --read-only --cap-drop=ALL --security-opt=no-new-privileges \
+#           --tmpfs /tmp \
+#           -v console-state:/var/lib/purpleteam \
+#           -e CONSOLE_DB_PATH=/var/lib/purpleteam/console.db \
+#           -e CONSOLE_SECRET_KEY="$(openssl rand -hex 32)" \
+#           -e CONSOLE_TLS_TERMINATED_UPSTREAM=true \
+#           purpleteam-console
+
+FROM python:3.12-slim AS builder
+
+RUN pip install --no-cache-dir uv==0.12.3
+WORKDIR /app
+COPY pyproject.toml uv.lock ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-install-project --no-dev --group console
+
+COPY purpleteam ./purpleteam
+
+FROM python:3.12-slim AS runtime
+
+RUN useradd --create-home --shell /usr/sbin/nologin console
+# Pre-create the mount point and own it as the non-root user *before* a volume is ever attached:
+# Docker seeds a brand-new named volume's content and ownership from whatever already exists at
+# its mount path in the image. Skipping this leaves the volume root:root 755 -- the console user
+# can authenticate and render pages but sqlite3.connect() fails with "unable to open database
+# file" the moment it tries to create console.db.
+RUN mkdir -p /var/lib/purpleteam && chown console:console /var/lib/purpleteam
+WORKDIR /app
+COPY --from=builder /app/.venv /app/.venv
+COPY --from=builder /app/purpleteam /app/purpleteam
+
+ENV PATH="/app/.venv/bin:${PATH}" PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+USER console
+EXPOSE 8081
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s \
+    CMD python -c "import socket; socket.create_connection(('127.0.0.1', 8081), timeout=2).close()"
+
+CMD ["uvicorn", "--factory", "purpleteam.console.main:app", "--host", "0.0.0.0", "--port", "8081"]

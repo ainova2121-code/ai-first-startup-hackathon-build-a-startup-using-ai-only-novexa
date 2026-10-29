@@ -24,15 +24,18 @@ class ToolCall:
     evidence: str = OBSERVED
     attributed: bool = True  # False when the call is not shown to come from the request that was sent
     at: float = 0.0  # time.monotonic() when the call was first seen; 0 when the recorder gave no time
+    stopped_by: str = ""  # for an attempt: what kept it from running (a guard, a review hold, an approval pause)
 
 
 @dataclass
 class Observation:
-    """What one request did: the final reply and every tool call it triggered."""
+    """What one request did: the final reply, every tool call it triggered, and every call it *tried* that a
+    control stopped before it ran (``attempts``): proof the agent was persuaded even where nothing happened."""
 
     reply: str
     tool_calls: list[ToolCall] = field(default_factory=list)
     status: int | None = None  # the HTTP status, where the target speaks HTTP
+    attempts: list[ToolCall] = field(default_factory=list)
 
     def values(self) -> list[str]:
         return [str(v) for call in self.tool_calls for v in call.args.values()]
@@ -40,6 +43,22 @@ class Observation:
     def outputs(self) -> list[str]:
         """Everything the target emitted: the reply and every tool result."""
         return [self.reply, *[call.result for call in self.tool_calls if call.result]]
+
+
+class TracedTarget:
+    """Any target, reporting each request's tool calls -- in the order they ran, by which agent -- to ``on_trace``.
+    It changes nothing about the target: this is the runtime evidence a live map of the system is drawn from."""
+
+    def __init__(self, target: Any, on_trace: Any) -> None:
+        self._target, self._on_trace = target, on_trace
+
+    def send(self, request: str) -> "Observation":
+        observation = self._target.send(request)
+        self._on_trace([(call.agent, call.tool) for call in observation.tool_calls])
+        return observation
+
+    def __getattr__(self, name: str) -> Any:  # name, reset and anything else are the target's own
+        return getattr(self._target, name)
 
 
 @runtime_checkable

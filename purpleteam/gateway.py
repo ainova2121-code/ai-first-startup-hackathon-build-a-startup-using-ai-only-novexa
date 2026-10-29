@@ -23,15 +23,13 @@ passed unobserved. A key must still be valid when an answer is released, not onl
 revoked or expired in the meantime is withheld whole (a stream is cut), so revoking a key stops work already in
 flight. Observation can never fail a request: ``GatewayObserver.observe`` does not raise. Each
 upstream key can be a function, so it can be fetched from the customer's secrets manager on each request.
-``serve`` refuses to listen on a network address without TLS.
+``purpleteam.gateway_serve.serve`` refuses to listen on a network address without TLS.
 """
 
 from __future__ import annotations
 
-import ipaddress
 import json
 import re
-import ssl
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -52,6 +50,7 @@ from purpleteam.gateway_policy import DecisionPoint, Guard, Refusal
 
 AGENT_HEADER = "x-purpleteam-agent"
 MAX_BODY = 4_000_000
+MAX_EXPORT = 1000  # events a single /ledger/export page may return
 _REFUSALS = {401: "unauthorized", 403: "this key cannot be used here", 429: "too many requests"}
 _MODEL = re.compile(r"[A-Za-z0-9._-]{1,100}")
 _ACTIONS = ("generateContent", "streamGenerateContent")
@@ -137,16 +136,23 @@ def create_gateway(observer: GatewayObserver, *, keys: GatewayKeys, openai: Prov
 
     def authorize(request: Request, role: str):
         """The key from whichever header the caller's SDK uses; refusals say nothing about why. The agent the key
-        is bound to, if any, is kept on the request as its authenticated identity."""
+        is bound to, if any, is kept on the request as its authenticated identity. While enforcement is on, an
+        unbound target key is refused outright: without this, a caller holding it could name any agent it likes
+        via X-Purpleteam-Agent (anything can set that header) and be checked against that agent's real policy
+        permissions — the key only ever proves "some target", never which one. Discovery still needs an unbound
+        key to see every agent's traffic before any of them have a key of their own; that is why this only
+        applies once a signed policy is actually being enforced, not during observe-only discovery."""
         header = request.headers.get("authorization") or next(
             (f"Bearer {v}" for h in ("x-api-key", "x-goog-api-key") if (v := request.headers.get(h))), "")
         try:
             grant = keys.authenticate(header, role)
-            request.state.agent, request.state.key_id = grant.agent, grant.key_id
-            return grant
         except AuthError as error:
             raise HTTPException(error.status, _REFUSALS[error.status],
                                 headers={"Retry-After": "60"} if error.status == 429 else None) from None
+        if role == TARGET and grant.agent is None and decisions.enforcing:
+            raise HTTPException(403, _REFUSALS[403])
+        request.state.agent, request.state.key_id = grant.agent, grant.key_id
+        return grant
 
     async def forward(request: Request, dialect: Dialect, url: str, headers: dict[str, str],
                       streaming: bool | None = None, model: str | None = None) -> Response:
@@ -268,30 +274,17 @@ def create_gateway(observer: GatewayObserver, *, keys: GatewayKeys, openai: Prov
         authorize(request, ADMIN)
         return observer.summary()
 
+    if ledger is not None:
+        @app.get("/ledger/export")
+        async def ledger_export(request: Request, after_seq: int = -1, limit: int = 500) -> dict:
+            """A page of signed events after ``after_seq`` (the highest seq the caller already has;
+            -1 for a caller starting fresh, since seq itself starts at 0), for a fleet console to
+            pull (BYOC means it has no filesystem access to this ledger, only this paginated read)."""
+            authorize(request, ADMIN)
+            if after_seq < -1 or not (1 <= limit <= MAX_EXPORT):
+                raise HTTPException(400, f"limit must be between 1 and {MAX_EXPORT}")
+            page = [e for e in ledger.events() if e["seq"] > after_seq][:limit]
+            return {"log_id": ledger.log_id, "size": ledger.count(), "events": page,
+                    "next_seq": page[-1]["seq"] if len(page) == limit else None}
+
     return app
-
-
-def check_binding(host: str, certfile: str | None, keyfile: str | None, client_ca: str | None) -> None:
-    """Plain HTTP is allowed only on loopback (behind a TLS proxy on the same machine); anything else needs TLS."""
-    try:
-        loopback = ipaddress.ip_address(host).is_loopback
-    except ValueError:
-        loopback = False
-    if bool(certfile) != bool(keyfile):
-        raise ValueError("certfile and keyfile go together")
-    if client_ca and not certfile:
-        raise ValueError("client certificates (mutual TLS) need TLS: pass certfile and keyfile as well")
-    if not certfile and not loopback:
-        raise ValueError(f"refusing to listen on {host} without TLS: pass certfile and keyfile, "
-                         "or bind 127.0.0.1 behind a TLS-terminating proxy")
-
-
-def serve(app: FastAPI, *, host: str = "127.0.0.1", port: int = 8443, certfile: str | None = None,
-          keyfile: str | None = None, client_ca: str | None = None) -> None:
-    """Run the gateway. With ``client_ca`` every caller must also present a certificate that CA signed."""
-    check_binding(host, certfile, keyfile, client_ca)
-    import uvicorn
-
-    uvicorn.run(app, host=host, port=port, ssl_certfile=certfile, ssl_keyfile=keyfile, ssl_ca_certs=client_ca,
-                ssl_cert_reqs=ssl.CERT_REQUIRED if client_ca else ssl.CERT_NONE,
-                access_log=False, server_header=False)

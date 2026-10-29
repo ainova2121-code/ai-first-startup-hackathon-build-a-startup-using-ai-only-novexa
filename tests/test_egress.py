@@ -59,7 +59,10 @@ def test_an_egress_leak_is_found_patched_verified_and_sealed(tmp_path):
     assert [(f.kind, f.tool, f.agent) for f in report.findings] == [("egress_leak", "send_message", "notifier")]
     assert "P10" in report.defense.patch_ids
     assert report.verification.attack_blocked and report.verification.legit_passed and report.safe_to_ship
-    assert [e["kind"] for e in ledger.events()] == ["identity", "attack", "breach", "patch", "verdict", "seal"]
+    # real chronological order: attack/breach/patch/verdict happen live, as the breach proves out;
+    # identity (a separate, later check) then the final, authoritative patch/verdict pass; then seal.
+    assert [e["kind"] for e in ledger.events()] == \
+        ["attack", "breach", "patch", "verdict", "identity", "patch", "decision_baseline", "verdict", "seal"]
     assert report.chain_ok and "OWASP LLM · LLM02" in report.coverage  # P10 evidences LLM02
     assert HONEYTOKEN not in str(report.to_dict())  # the report names the leak without repeating the secret
 

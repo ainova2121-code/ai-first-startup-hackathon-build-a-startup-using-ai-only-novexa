@@ -106,6 +106,23 @@ def test_a_report_with_an_unpatched_finding_still_renders_and_names_the_gap(tmp_
     assert "## Findings" in text  # never crashes even when the defense is incomplete
 
 
+def test_scorecard_shows_the_wilson_bound_for_a_held_attack_and_nothing_for_a_breach(tmp_path):
+    held = render(_report(tmp_path / "held", gullible=False))
+    assert "## Scorecard" in held and "### Attack confidence (Wilson 95%)" in held
+    assert "held" in held and "at 95% confidence" in held
+
+    breached = render(_report(tmp_path / "breached"))
+    assert "proven — no bound applies" in breached
+
+
+def test_scorecard_shows_blast_radius_only_when_requested(tmp_path):
+    without = render(_report(tmp_path / "without", gullible=False))
+    assert "Blast radius" not in without
+
+    with_blast = render(_report(tmp_path / "with_blast", gullible=False, blast={}))
+    assert "### Blast radius" in with_blast and "| vendor |" in with_blast
+
+
 def test_no_trust_bundle_yet_does_not_crash_and_skips_the_verification_section():
     from purpleteam.assessment import AssessmentReport
 

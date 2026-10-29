@@ -23,19 +23,34 @@ from typing import Protocol
 
 from purpleteam.defender.selector import Finding
 
-_SCAN_TIMEOUT = 120
+_SCAN_TIMEOUT = 600
 
-# Bandit test ID -> the Finding kind this platform knows what to do with. Only mapped IDs are
-# kept; an unmapped Bandit finding would have nowhere to route. sql_injection has a runtime patch
-# (purpleteam.patches.catalog); hardcoded_secret and shell_injection do not — no guard can "un-hardcode"
-# a secret or make an already-built shell command safe to run, only a source change can, so these
-# two are codemod-only findings and are expected to surface as an unpatched gap at defend time
-# (see assessment._defend_and_verify) until a human reviews and applies the drafted fix.
+# Third-party and generated code a project ships with but does not own: scanning a cloned target's
+# own .venv would bury its real findings under thousands from its dependencies (and time out).
+EXCLUDED_DIRS = (".venv", "venv", "env", ".env", "node_modules", "site-packages", ".git", "__pycache__",
+                 ".tox", ".nox", ".mypy_cache", ".pytest_cache", "build", "dist", ".eggs")
+
+# Bandit test ID -> the Finding kind this platform knows what to do with. sql_injection has a runtime
+# patch (purpleteam.patches.catalog); the rest have none -- no guard can "un-hardcode" a secret or make
+# an already-built shell command safe -- so only a verified source edit resolves them. Every other
+# Bandit check still runs and is reported as ``bandit:<id>`` (see ``StaticFinding.blocking``).
 BANDIT_KINDS = {
     "B608": "sql_injection",
     "B105": "hardcoded_secret", "B106": "hardcoded_secret", "B107": "hardcoded_secret",
-    "B602": "shell_injection",
+    "B602": "shell_injection", "B604": "shell_injection", "B605": "shell_injection",
+    "B102": "code_execution", "B307": "code_execution",
+    "B301": "insecure_deserialization", "B506": "insecure_deserialization",
+    "B501": "tls_verification_disabled",
+    "B324": "weak_hash",
+    "B113": "request_without_timeout",
 }
+# Kinds always blocking whatever the scanner's own severity says: Bandit rates a hardcoded password LOW.
+_ALWAYS_BLOCKING = frozenset(BANDIT_KINDS.values())
+SCANNED_SUFFIXES = {"bandit": frozenset({".py"})}
+
+
+class ScanFailed(RuntimeError):
+    """The scanner could not complete: never to be read as "found nothing"."""
 
 # SonarQube rule key -> the same Finding kinds, across the languages its default rule sets cover.
 # sql_injection only: the equivalent Python rule keys for hardcoded credentials and OS command
@@ -53,6 +68,12 @@ class StaticFinding:
     detail: str
     severity: str = "medium"
 
+    @property
+    def blocking(self) -> bool:
+        """Whether this finding alone stops a release: every mapped kind, and any other finding the
+        scanner rates medium or high. A low-severity unmapped one is reported as advisory."""
+        return self.kind in _ALWAYS_BLOCKING or self.severity in ("medium", "high", "critical", "major", "blocker")
+
     def as_finding(self) -> Finding:
         """Feed the same Defender/patch-catalog pipeline a dynamic breach would."""
         return Finding(self.kind, tool="", agent="", detail=f"{self.detail} ({self.file}:{self.line})",
@@ -64,30 +85,52 @@ class Scanner(Protocol):
 
 
 class BanditScanner:
-    """Bandit: local, offline Python security linting. No account, no network."""
+    """Bandit: local, offline Python security linting. No account, no network. Runs every Bandit
+    check (not only the mapped ones), so a fix that introduces any new issue is caught on rescan."""
+
+    languages = SCANNED_SUFFIXES["bandit"]
 
     def __init__(self, kinds: dict[str, str] = BANDIT_KINDS) -> None:
         self._kinds = kinds
 
     def scan(self, repo: Path) -> list[StaticFinding]:
+        excluded = ",".join(f"*/{name}/*" for name in EXCLUDED_DIRS)
         try:
-            result = subprocess.run(
-                ["bandit", "-r", str(repo), "-f", "json", "-t", ",".join(self._kinds)],
-                capture_output=True, timeout=_SCAN_TIMEOUT, text=True)
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            return []
+            result = subprocess.run(["bandit", "-r", str(repo), "-f", "json", "-q", "-x", excluded],
+                                    capture_output=True, timeout=_SCAN_TIMEOUT, text=True)
+        except FileNotFoundError as error:
+            raise ScanFailed("bandit is not installed") from error
+        except subprocess.TimeoutExpired as error:
+            raise ScanFailed(f"bandit did not finish within {_SCAN_TIMEOUT}s") from error
         try:
-            report = json.loads(result.stdout or "{}")
-        except ValueError:
-            return []
+            report = json.loads(result.stdout)
+        except ValueError as error:  # exit 1 only means "issues found"; no JSON at all means it broke
+            raise ScanFailed(f"bandit produced no report (exit {result.returncode})") from error
+        if report.get("errors"):
+            files = ", ".join(sorted(Path(e.get("filename", "?")).name for e in report["errors"])[:5])
+            raise ScanFailed(f"bandit could not analyse {len(report['errors'])} file(s): {files}")
         findings = []
         for issue in report.get("results", []):
-            kind = self._kinds.get(issue.get("test_id", ""))
-            if kind is None:
-                continue
+            test_id = issue.get("test_id", "")
+            kind = self._kinds.get(test_id, f"bandit:{test_id}")
             findings.append(StaticFinding(kind, issue["filename"], issue["line_number"], issue["issue_text"],
                                           issue.get("issue_severity", "medium").lower()))
         return findings
+
+
+def unscanned_sources(repo: Path, scanned: frozenset[str]) -> dict[str, int]:
+    """Source files, by suffix, that no configured scanner reads -- so a clean scan is never
+    presented as covering code nobody looked at. Dependencies and build output are not counted."""
+    counts: dict[str, int] = {}
+    for path in repo.rglob("*"):
+        if path.suffix.lower() in _SOURCE_SUFFIXES and path.suffix.lower() not in scanned and path.is_file() \
+                and not any(part in EXCLUDED_DIRS for part in path.relative_to(repo).parts):
+            counts[path.suffix.lower()] = counts.get(path.suffix.lower(), 0) + 1
+    return counts
+
+
+_SOURCE_SUFFIXES = frozenset({".py", ".js", ".jsx", ".mjs", ".ts", ".tsx", ".go", ".java", ".kt", ".rb", ".php",
+                              ".cs", ".rs", ".swift", ".scala", ".c", ".cc", ".cpp", ".h"})
 
 
 def bandit_available() -> bool:
@@ -101,6 +144,8 @@ def bandit_available() -> bool:
 class SonarQubeScanner:
     """Reads issues already found by a self-hosted SonarQube instance for one project; never
     triggers or uploads a scan itself, and never talks to SonarCloud (see module docstring)."""
+
+    languages = _SOURCE_SUFFIXES  # the server analyses every language its rule sets cover
 
     def __init__(self, base_url: str, token, project_key: str, http=None, kinds: dict[str, str] = SONARQUBE_KINDS) -> None:
         host = base_url.rstrip("/").lower()

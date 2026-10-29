@@ -1,11 +1,17 @@
 # purpleteam
 
-A BYOC AI purple-team platform: it discovers an AI agent system's own agents and tools from the
-traffic it generates, attacks it with proof-based techniques (a breach must leave hard evidence —
-a canary value reaching a real tool call — never a model's opinion), patches it from a prewritten,
-human-reviewed catalog (it never generates code), re-verifies the fix by attacking again, and seals
-every step into a signed, tamper-evident audit trail mapped to the compliance clauses it evidences
-(OWASP LLM Top 10, PCI SSC AI principles, EU AI Act, NIST AI RMF, SOC 2, HIPAA, DORA, ISO 42001).
+A BYOC AI purple-team platform: it discovers an AI agent system's own agents and tools, attacks it
+with proof-based techniques (a breach must leave hard evidence — a canary value reaching a real tool
+call — never a model's opinion), defends it, re-attacks with the exact payloads that got through to
+prove the defense holds, and seals every step into a signed, tamper-evident audit trail mapped to
+the compliance clauses it evidences (OWASP LLM Top 10, PCI SSC AI principles, EU AI Act, NIST AI RMF,
+SOC 2, HIPAA, DORA, ISO 42001).
+
+The defense has two parts. Runtime guards are only ever *selected* from a prewritten, reviewed
+catalog. Source fixes are exact-match codemods: a model-drafted one is applied only when the scanner's
+rescan and an independent invariant both pass, it is labelled everywhere as not human-reviewed, every
+original is snapshotted first, and one click restores them all. The target is never called safe to
+ship until the edited code has been reloaded and attacked again.
 
 Everything runs in your own cloud. The target needs no SDK and no code change: point its model's
 base URL at the gateway below, and traffic alone gives the platform everything it needs — which
@@ -14,6 +20,53 @@ has to answer.
 
 `ledgerpilot/` is the included demo target: a deliberately vulnerable accounts-payable multi-agent
 system, used to prove the platform against a real, running agent rather than a toy.
+
+## The live console
+
+```bash
+uv sync
+cp .env.example .env    # set HF_TOKEN (or LEDGERPILOT_LLM_API_KEY) and a DEMO_ACCESS_CODE of 12+ characters
+uv run uvicorn --factory purpleteam.live_demo:app --port 8090
+```
+
+Open http://localhost:8090 and sign in with `DEMO_ACCESS_CODE` (every route sits behind it). Pick a mode:
+
+- **Static** (seconds): discovery, identity posture, the source scan and prompt rules. No attack runs, so
+  it gives no release verdict.
+- **Full** (about 3 minutes): every attack meets the *unpatched* agent, side by side, so the breach count
+  is its real exposure. The attacker uses no model: plain claims written by rule from the discovered tool
+  schema, the same claims hidden inside a document or a form field, and PyRIT's jailbreak,
+  prompt-injection and social-engineering templates. The defender then checks legitimate work first
+  (a patch that breaks it is dropped before any replay), re-attacks with every breaching payload three
+  times, applies verified source fixes, reloads the edited target and attacks it again.
+- **Advanced**: Full, plus base64-disguised and document-buried variants and five verification trials.
+
+Measured on LedgerPilot (`openai/gpt-oss-120b` via Cerebras): 8–9 of 23 attacks breach across three
+techniques — one planted bank account travels from the intake agent to the vendor and payment agents —
+while all 8 jailbreak templates hold; every breach is held on re-attack; every agent reply is under 30 s.
+
+The pages show it live: the **discovery** map builds as agents and tools are found; **Patched files** shows
+the real diffs (and **Restore original files** undoes them); **Decision drift** compares each guard decision
+with the last approved run; the **Audit ledger** draws each signature the moment it is made, grows the
+Merkle tree (the inclusion proof is recomputed in your browser), and shows the checkpoint's TPM signature
+and RFC 3161 timestamp. `PURPLETEAM_ONLY_STATIC=0` adds the model-driven attacks (targeted recon, TAP).
+
+## Assess another agent project
+
+```bash
+uv run python -m purpleteam.assess https://github.com/<owner>/<repo> --legit "a normal request it should handle"
+```
+
+Clones the project into its own environment, finds its entry point by reading its source, discovers its
+agents and tools, and runs the same assessment. It executes that project's code on this machine in a
+separate process, not a container: assess only code you would run yourself, or run it inside a VM.
+
+## Deploy the live console (Azure, TPM-signed)
+
+[deploy/azure_windows.ps1](deploy/azure_windows.ps1) sets the console up on a Windows Server 2022 VM
+created with *Trusted launch* (a virtual TPM 2.0): checksum-verified uv and Caddy, automatic HTTPS on the
+VM's `cloudapp.azure.com` name, and startup tasks that restart on failure. Every checkpoint is then signed
+by that VM's TPM. The script's header lists the portal steps.
 
 ## Deploy the gateway (Docker Compose, one host)
 
@@ -44,6 +97,20 @@ cosign verify ghcr.io/<owner>/purpleteam-gateway@sha256:<digest> \
 See [Dockerfile.gateway](Dockerfile.gateway) for what the hardened run flags above actually protect
 and what they don't.
 
+## Watch your fleet (the console)
+
+`docker compose up -d` above also starts the console (`docker compose logs console` for its
+one-time bootstrap admin password). It watches every gateway you register into it — agents,
+permissions, active keys, sealed-run verdicts, containment events — live, updated over SSE as
+each one is polled.
+
+Sign in, then **Targets → Register a gateway** with that gateway's own admin bearer key (from
+`docker compose logs gateway`). Three roles: `admin` (manage the fleet and console users),
+`analyst` (everything but fleet/user management), `auditor` (evidence-shaped views only — no raw
+activity drill-down). The console only ever *reads* from a gateway over HTTP (`/ledger/export`,
+admin-only, paginated) — it never touches the gateway's filesystem and nothing it does narrows or
+widens a signed policy; that stays the gateway's own job.
+
 ### Turning enforcement on
 
 Observe-only is the right place to start: let discovery and a first assessment run, review what
@@ -55,7 +122,8 @@ an unsigned or edited one.
 
 ### Onboarding your own agent
 
-There is no guided UI for this yet — today it's a short Python script against
+There is no guided UI for *this* yet (the console above manages the fleet view, not discovery
+itself) — today it's a short Python script against
 `purpleteam.targets.endpoint.HttpTarget` (for anything that takes a message over HTTP: an n8n
 webhook, a chat API) or `purpleteam.assessment.Assessment` directly. `purpleteam/demo.py` is a
 complete, working example against the included LedgerPilot target — the same shape applies to

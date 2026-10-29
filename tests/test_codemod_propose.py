@@ -89,3 +89,27 @@ def test_a_draft_that_fails_reverification_yields_no_proposal(tmp_path):
 
     result = asyncio.run(propose(FINDING, path, scanner, catalog, complete=complete))
     assert result is None
+
+
+def test_a_rejected_draft_is_retried_and_only_a_verified_one_is_returned(tmp_path):
+    """Drafts vary run to run; a subtly broken one (parameters as a string) must be discarded and
+    the next draft tried, never returned."""
+    broken = "cursor.execute('SELECT * FROM t WHERE id=?', f'{x},')"
+    replies = iter([json.dumps({"replacement": broken, "explanation": "bad"}),
+                    json.dumps({"replacement": FIXED, "explanation": "good"})])
+
+    async def complete(system_prompt, user_content):
+        return next(replies)
+
+    path = _file(tmp_path)
+    scanner = _ScriptedScanner({ORIGINAL: [("sql_injection", 1)], broken: [], FIXED: []})
+    verified = asyncio.run(propose(FINDING, path, scanner, CodemodCatalog(tmp_path / "c"), complete=complete))
+    assert verified is not None and verified.replacement == FIXED
+
+
+def test_drafting_gives_up_after_the_attempt_budget(tmp_path):
+    complete = _complete(fails=True)
+    path = _file(tmp_path)
+    result = asyncio.run(propose(FINDING, path, _ScriptedScanner({}), CodemodCatalog(tmp_path / "c"),
+                                 complete=complete, attempts=2))
+    assert result is None and complete.calls == 2

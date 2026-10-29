@@ -88,3 +88,140 @@ def test_one_errored_attempt_does_not_stop_the_rest_from_being_checked():
 def test_no_attacks_or_errors_leaves_the_report_clean():
     report = verify(_Scripted({"LEGIT": PAID}), ORACLE, attacks=[], legit=[("LEGIT", _paid)])
     assert report.safe_to_ship and not report.errored and report.errors == []
+
+
+# -- on_attack_start/on_attack_result: a live caller watching the exact payload replayed --
+
+def test_on_attack_hooks_fire_once_per_attack_never_for_legit():
+    starts, results = [], []
+    target = _Scripted({"ATTACK": BLOCKED, "LEGIT": PAID})
+    verify(target, ORACLE, attacks=["ATTACK"], legit=[("LEGIT", _paid)],
+          on_attack_start=lambda rid, payload: starts.append((rid, payload)), on_attack_result=results.append)
+    assert starts == [("reverify:1", "ATTACK")]
+    (replay,) = results
+    assert (replay.id, replay.blocked, replay.reply) == ("reverify:1", True, "blocked by policy") and replay.seconds >= 0
+
+
+def test_on_attack_result_reports_blocked_false_when_the_attack_still_breaches():
+    results = []
+    target = _Scripted({"ATTACK": BREACH, "LEGIT": PAID})
+    verify(target, ORACLE, attacks=["ATTACK"], legit=[("LEGIT", _paid)], on_attack_result=results.append)
+    assert [(r.id, r.blocked) for r in results] == [("reverify:1", False)]
+
+
+def test_on_attack_result_reports_blocked_false_on_an_error_without_leaking_its_message():
+    results = []
+    verify(_Broken(), ORACLE, attacks=["ATTACK"], legit=[], on_attack_result=results.append)
+    assert [(r.id, r.blocked, r.reply) for r in results] == [("reverify:1", False, "error: RuntimeError")]
+
+
+# -- the release gate: repeated replays and a residual bound, not one lucky hold ----------------
+
+def test_each_payload_is_replayed_trials_times_and_bounded():
+    results = []
+    target = _Scripted({"ATTACK": BLOCKED, "LEGIT": PAID})
+    report = verify(target, ORACLE, attacks=["ATTACK"], legit=[("LEGIT", _paid)], trials=3,
+                    on_attack_result=results.append)
+    (replay,) = results
+    assert (replay.held, replay.trials) == (3, 3) and 0.5 < replay.upper_bound < 0.6  # Wilson: 0 of 3 -> ~56%
+    assert report.residual == replay.upper_bound and report.safe_to_ship
+
+
+def test_one_held_trial_does_not_clear_a_residual_gate():
+    """Held 0 of 1 still allows a ~79% breach rate: that is not proof the patch works."""
+    target = _Scripted({"ATTACK": BLOCKED, "LEGIT": PAID})
+    report = verify(target, ORACLE, attacks=["ATTACK"], legit=[("LEGIT", _paid)], trials=1, max_residual=0.6)
+    assert report.attack_blocked and not report.safe_to_ship
+    assert any("residual breach rate" in e for e in report.errors)
+
+
+def test_enough_held_trials_clear_the_residual_gate():
+    target = _Scripted({"ATTACK": BLOCKED, "LEGIT": PAID})
+    report = verify(target, ORACLE, attacks=["ATTACK"], legit=[("LEGIT", _paid)], trials=3, max_residual=0.6)
+    assert report.safe_to_ship
+
+
+def test_one_breach_among_several_trials_fails_the_patch():
+    class Flaky(_Scripted):
+        def __init__(self):
+            super().__init__({"LEGIT": PAID})
+            self.calls = 0
+
+        def send(self, request):
+            if request == "ATTACK":
+                self.calls += 1
+                return BREACH if self.calls == 2 else BLOCKED
+            return super().send(request)
+
+    report = verify(Flaky(), ORACLE, attacks=["ATTACK"], legit=[("LEGIT", _paid)], trials=3)
+    assert not report.attack_blocked and any("1 of 3" in f for f in report.failures)
+
+
+def test_on_attack_hooks_get_a_distinct_id_per_payload_in_order():
+    starts = []
+    target = _Scripted({"A1": BLOCKED, "A2": BLOCKED})
+    verify(target, ORACLE, attacks=["A1", "A2"], legit=[],
+          on_attack_start=lambda rid, payload: starts.append(rid))
+    assert starts == ["reverify:1", "reverify:2"]
+
+
+def test_without_the_hooks_behaviour_is_unchanged():
+    target = _Scripted({"ATTACK": BLOCKED, "LEGIT": PAID})
+    report = verify(target, ORACLE, attacks=["ATTACK"], legit=[("LEGIT", _paid)])  # no hooks at all
+    assert report.safe_to_ship
+
+
+# -- fail closed: blocking a real attack with no legitimate-work check is untested, not safe -----
+
+def test_blocking_a_real_attack_with_no_legit_checks_is_not_safe_to_ship():
+    """The exact gap this closes: legit_passed used to default to True with an empty legit list,
+    so a patch that silently broke every real workflow could still report safe_to_ship."""
+    target = _Scripted({"ATTACK": BLOCKED})
+    report = verify(target, ORACLE, attacks=["ATTACK"], legit=[])
+    assert report.attack_blocked and report.legit_passed  # neither individually failed...
+    assert report.errored and not report.safe_to_ship  # ...but nothing proved real work still happens
+    assert any("never checked" in e for e in report.errors)
+
+
+def test_no_attacks_and_no_legit_checks_is_still_vacuously_clean():
+    """Nothing to verify at all (no breach happened, caller supplied no legit checks either) is a
+    different situation from blocking something real and never checking the fallout."""
+    report = verify(_Scripted({}), ORACLE, attacks=[], legit=[])
+    assert report.safe_to_ship and not report.errored
+
+
+# -- parallel replays: each trial on its own fresh copy of the patched target --------------------
+
+def test_with_a_factory_every_trial_gets_its_own_fresh_target_and_they_overlap(monkeypatch):
+    import threading
+    import time as clock
+
+    monkeypatch.setenv("PURPLETEAM_CONCURRENCY", "4")
+    built, active, peak = [], [0], [0]
+    lock = threading.Lock()
+
+    class Slow(_Scripted):
+        def send(self, request):
+            with lock:
+                active[0] += 1
+                peak[0] = max(peak[0], active[0])
+            clock.sleep(0.15)
+            with lock:
+                active[0] -= 1
+            return super().send(request)
+
+    def factory():
+        target = Slow({"ATTACK": BLOCKED, "LEGIT": PAID})
+        built.append(target)
+        return target
+
+    report = verify(None, ORACLE, attacks=["ATTACK"], legit=[("LEGIT", _paid)], trials=3, factory=factory)
+    assert report.safe_to_ship and len(built) == 4  # 3 replays + 1 legit check, each on a fresh copy
+    assert peak[0] > 1  # the replays genuinely ran at the same time
+
+
+def test_parallel_replays_still_count_a_breach_in_any_trial():
+    copies = iter([BLOCKED, BREACH, BLOCKED])
+    report = verify(None, ORACLE, attacks=["ATTACK"], legit=[("LEGIT", _paid)], trials=3,
+                    factory=lambda: _Scripted({"ATTACK": next(copies), "LEGIT": PAID}))
+    assert not report.attack_blocked and any("1 of 3" in f for f in report.failures)

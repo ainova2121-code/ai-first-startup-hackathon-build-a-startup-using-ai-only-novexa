@@ -8,6 +8,7 @@ import pytest
 
 from purpleteam.audit.keys import AgentKeyring
 from purpleteam.defender.policy import load_guard, save_policy
+from purpleteam.decisions import Probe, decide
 from purpleteam.defender.selector import Defender, Finding
 from purpleteam.discovery import DiscoveredTool, TargetProfile
 from purpleteam.identity import PermissionManifest
@@ -37,6 +38,22 @@ def test_a_tool_gate_patch_blocks_the_same_tool_after_a_round_trip(tmp_path):
     with pytest.raises(Blocked):
         rebuilt.authorize("vendor", "update_vendor_bank", {})
     rebuilt.authorize("vendor", "lookup_vendor", {})  # a different tool is never blocked by P4
+
+
+@pytest.mark.parametrize("level", [1, 2])
+def test_an_escalated_defense_rebuilds_into_exactly_the_guard_that_was_verified(tmp_path, level):
+    """Before: the escalation level was never saved, so a gateway enforced the weaker level-0 defense."""
+    profile = TargetProfile("fake", [*PROFILE.tools, DiscoveredTool("pay_vendor", "", {}, "", "write", "vendor")])
+    findings = [Finding("injection_action", "update_vendor_bank", "vendor", "canary reached it")]
+    verified = Defender(profile, {}, escalation=level).select_all(findings).guard
+    keyring = AgentKeyring()
+    save_policy(tmp_path / "p.json", findings, profile, {}, keyring, escalation=level)
+    loaded = load_guard(tmp_path / "p.json", keyring.public_keys()["defender"]).guard
+
+    probes = [Probe("authorize", agent, tool, "{}") for agent in ("vendor", "reports")
+              for tool in ("update_vendor_bank", "pay_vendor", "lookup_vendor", "run_query")]
+    assert [decide(loaded, p) for p in probes] == [decide(verified, p) for p in probes]
+    assert decide(loaded, Probe("authorize", "vendor", "pay_vendor", "{}"))[0] != "allow"  # the widened scope
 
 
 def test_a_manifest_backed_patch_round_trips_through_to_dict(tmp_path):
@@ -118,6 +135,42 @@ def test_a_policy_signed_by_an_untrusted_key_is_rejected(tmp_path):
 
     with pytest.raises(ValueError, match="not trusted"):
         load_guard(path, attacker.public_keys()["defender"])  # the gateway pinned a different key
+
+
+SECRET = "HTK-POLICY-SECRET-0001"
+LEAK = [Finding("egress_leak", "update_vendor_bank", "vendor", "secret left")]
+
+
+def test_secrets_are_never_written_in_plaintext(tmp_path):
+    with pytest.raises(ValueError, match="plaintext"):
+        save_policy(tmp_path / "p.json", LEAK, PROFILE, {"secrets": [SECRET]}, AgentKeyring())
+
+    keyring = AgentKeyring()
+    save_policy(tmp_path / "p.json", LEAK, PROFILE, {"secrets": [SECRET]}, keyring, secrets_key="op-key")
+    assert SECRET not in (tmp_path / "p.json").read_text()
+    guard = load_guard(tmp_path / "p.json", keyring.public_keys()["defender"], secrets_key="op-key").guard
+    with pytest.raises(Blocked):
+        guard.authorize("vendor", "lookup_vendor", {"note": SECRET})  # the decrypted secret is enforced
+
+
+def test_encrypted_secrets_need_the_right_key_to_load(tmp_path):
+    keyring = AgentKeyring()
+    save_policy(tmp_path / "p.json", LEAK, PROFILE, {"secrets": [SECRET]}, keyring, secrets_key="op-key")
+    with pytest.raises(ValueError, match="GATEWAY_POLICY_SECRETS_KEY"):
+        load_guard(tmp_path / "p.json", keyring.public_keys()["defender"])
+    with pytest.raises(ValueError, match="cannot decrypt"):
+        load_guard(tmp_path / "p.json", keyring.public_keys()["defender"], secrets_key="wrong")
+
+
+def test_a_policy_approved_against_different_patch_code_refuses_to_load(tmp_path, monkeypatch):
+    """A valid signature must not let an upgrade silently rebuild an old approval into new behaviour."""
+    findings = [Finding("injection_action", "update_vendor_bank", "vendor", "canary reached it")]
+    keyring = AgentKeyring()
+    save_policy(tmp_path / "p.json", findings, PROFILE, {}, keyring)
+    from purpleteam.oversight import HumanReviewGate
+    monkeypatch.setattr(HumanReviewGate, "code_hash", lambda self: "changed-code")
+    with pytest.raises(ValueError, match="different patch catalog or patch code"):
+        load_guard(tmp_path / "p.json", keyring.public_keys()["defender"])
 
 
 def test_a_policy_with_no_signature_fields_is_rejected(tmp_path):

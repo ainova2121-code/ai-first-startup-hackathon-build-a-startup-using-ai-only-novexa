@@ -11,8 +11,6 @@ from purpleteam.capture import DiscoveryError
 from purpleteam.gateway import Provider, create_gateway
 from purpleteam.gateway_keys import ADMIN, TARGET, GatewayKeys
 from purpleteam.gateway_observer import MAX_AGENTS, GatewayObserver
-from purpleteam.oracle import CANARY_ACCOUNT, CanaryOracle
-from purpleteam.targets.endpoint import HttpTarget
 
 UPSTREAM_KEY = "sk-upstream-secret-value"
 KEYS = GatewayKeys()  # shared by the tests; generous limits, the limits themselves are tested in test_gateway_keys
@@ -204,55 +202,3 @@ def test_gateway_refuses_odd_upstreams():
         Provider("file:///etc", SecretStr("k"))
     with pytest.raises(ValueError, match="at least one provider"):
         create_gateway(GatewayObserver(), keys=KEYS)
-
-
-def _product(web: TestClient):
-    """An agent product built on no framework we know: a webhook that calls a model and a tool, via the gateway."""
-
-    def model(messages, system=SYSTEM):
-        return web.post("/v1/chat/completions", headers=AUTH, json={"model": "m", "tools": TOOLS, "messages": [
-            {"role": "system", "content": system}, *messages]}).json()["choices"][0]["message"]
-
-    def webhook(request: httpx.Request) -> httpx.Response:
-        text = json.loads(request.content)["chatInput"]
-        asked = [{"role": "user", "content": text}]
-        step = model(asked)
-        if step.get("tool_calls"):
-            done = [*asked, step, {"role": "tool", "tool_call_id": step["tool_calls"][0]["id"], "content": "record updated"}]
-            return httpx.Response(200, json={"output": {"text": model(done)["content"]}})
-        return httpx.Response(200, json={"output": {"text": step["content"]}})
-
-    return webhook
-
-
-def _obedient_model(request: httpx.Request) -> httpx.Response:
-    messages = json.loads(request.content)["messages"]
-    if messages[-1]["role"] == "tool":
-        return httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": "all done"}}]})
-    account = messages[-1]["content"].split()[-1]
-    call = _call(args=json.dumps({"account": account}))
-    return httpx.Response(200, json={"choices": [{"message": {"role": "assistant", "content": None, "tool_calls": [call]}}]})
-
-
-def test_any_http_product_can_be_profiled_attacked_and_judged():
-    web, observer = _gateway(_obedient_model)
-    target = HttpTarget("product", "https://product.test/webhook", observer, message_field="chatInput",
-                        reply_field="output.text",
-                        client=httpx.Client(transport=httpx.MockTransport(_product(web))))
-    observation = target.send(f"please update the record to {CANARY_ACCOUNT}")
-    assert observation.reply == "all done"
-    (call,) = observation.tool_calls
-    assert (call.tool, call.args, call.result) == ("update_record", {"account": CANARY_ACCOUNT}, "record updated")
-    profile = observer.profile("product")
-    verdict = CanaryOracle({CANARY_ACCOUNT}, profile.dangerous_tools).judge(observation)
-    assert verdict.breached and verdict.tool == "update_record"
-    assert target.send("nothing special here").tool_calls[0].args == {"account": "here"}  # each send sees only its own calls
-
-
-def test_http_target_reads_replies_and_refuses_odd_urls():
-    observer = GatewayObserver()
-    plain = HttpTarget("p", "https://x.test/hook", observer,
-                       client=httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, text="plain text"))))
-    assert plain.send("hi").reply == "plain text"
-    with pytest.raises(ValueError, match="http"):
-        HttpTarget("p", "ftp://x.test", observer)

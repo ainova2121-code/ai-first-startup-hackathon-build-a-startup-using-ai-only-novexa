@@ -34,6 +34,11 @@ what happens if an audit-log *write* fails, never whether an unsafe tool call is
 conflating the two is exactly the mistake ``GATEWAY_ENFORCE`` exists to make impossible. Leave
 ``GATEWAY_ENFORCE`` unset (the default) to run observe-only on purpose.
 
+``GATEWAY_DECISION_BASELINE`` (with ``GATEWAY_DECISION_DIGEST``, the digest a run's signed ledger pinned it
+by) adds policy-decision drift to that start-up check: every decision the last approved policy made is
+replayed through the policy about to be enforced, and the gateway refuses to start if any decision it
+made against verified attack input (or any redaction) would now be looser — see ``purpleteam.decisions``.
+
 ``GATEWAY_LIVE_CONTAINMENT=true`` (needs ``GATEWAY_ENFORCE=true`` with a policy that declares a
 manifest) turns on automatic, proof-gated narrowing on top of that signed policy — see
 ``purpleteam.gateway_containment``: a proven block escalates to denying the specific tool, or
@@ -59,7 +64,7 @@ know, from inside, whether something in front of it (a load balancer, ingress, s
 TLS. ``app()`` — the actual entry point uvicorn loads — refuses to start unless
 ``GATEWAY_TLS_TERMINATED_UPSTREAM=true`` says that has been checked, because the alternative is
 bearer keys and model traffic crossing the network in the clear by default. A deployment with no
-such proxy should call ``purpleteam.gateway.serve(...)`` directly with ``certfile``/``keyfile``
+such proxy should call ``purpleteam.gateway_serve.serve(...)`` directly with ``certfile``/``keyfile``
 instead, which terminates TLS itself and enforces the same thing (``check_binding``).
 """
 
@@ -75,22 +80,19 @@ from pydantic import SecretStr
 
 from purpleteam.audit.ledger import AuditLedger, LedgerCorrupt
 from purpleteam.audit.privacy import Redactor
+from purpleteam.decisions import require_no_loosening
 from purpleteam.defender.policy import LoadedPolicy, load_guard
 from purpleteam.gateway import Provider, create_gateway
+from purpleteam.gateway_bootstrap import bootstrap_keys
 from purpleteam.gateway_containment import LiveContainment
 from purpleteam.gateway_crypto import RepinningLedger, hardware, keyring, pinned_trust, save_trust
 from purpleteam.gateway_debug import ReasoningDebugLog
-from purpleteam.gateway_keys import ADMIN, TARGET, FileKeyStore, GatewayKeys
+from purpleteam.gateway_keys import FileKeyStore, GatewayKeys
 from purpleteam.gateway_observer import GatewayObserver
+from purpleteam.oversight import ReviewQueue
 
 _PROVIDER_ENV = {"openai": "OPENAI", "anthropic": "ANTHROPIC", "gemini": "GEMINI"}
-# Deliberately modest, not "the maximum GatewayKeys allows": these keys are printed to stderr once
-# (log collection could retain them) and the target key is unbound to any one agent (unavoidable —
-# multi-agent discovery needs one shared credential to see every agent's traffic before any of them
-# have a separate identity). Short TTL and a bounded budget limit what a leaked bootstrap key is
-# worth; mint per-agent keys once discovery has run and stop using these.
-_BOOTSTRAP_TTL = 24 * 3600
-_BOOTSTRAP_BUDGET = {"max_requests": 50_000, "per_minute": 600}
+
 
 
 def _provider(name: str) -> Provider | None:
@@ -128,6 +130,21 @@ def _policy_public_keys() -> dict:
     return data
 
 
+def _review_queue() -> ReviewQueue | None:
+    """``GATEWAY_REVIEW_QUEUE_FILE``, when set, is where every P4 hold/approval/rejection this
+    gateway's loaded policy produces is durably recorded, so a restart never forgets a pending or
+    already-decided human review. ``GATEWAY_REVIEW_AUTHORIZED`` (comma-separated), when set,
+    restricts who may actually approve or reject one. Left unset, P4 still works but only for the
+    life of this process — the same opt-in posture every other persistence knob here already
+    takes (GATEWAY_KEYS_FILE, GATEWAY_LEDGER_PATH...)."""
+    path = os.environ.get("GATEWAY_REVIEW_QUEUE_FILE")
+    if not path:
+        return None
+    authorized = os.environ.get("GATEWAY_REVIEW_AUTHORIZED")
+    reviewers = {name.strip() for name in authorized.split(",") if name.strip()} if authorized else None
+    return ReviewQueue(Path(path), authorized_reviewers=reviewers)
+
+
 def _policy() -> LoadedPolicy | None:
     """None when enforcement is off (observe-only, the default). ``GATEWAY_ENFORCE=true`` needs
     ``GATEWAY_POLICY_FILE`` naming a saved, signed, human-reviewed defender policy (see
@@ -145,38 +162,21 @@ def _policy() -> LoadedPolicy | None:
             "human-reviewed defender policy to load (purpleteam.defender.policy.save_policy). "
             "Leave GATEWAY_ENFORCE unset to run observe-only on purpose (the default).")
     public_keys = _policy_public_keys()
+    secrets_key = os.environ.get("GATEWAY_POLICY_SECRETS_KEY")
     try:
-        return load_guard(Path(policy_path), public_keys)
+        loaded = load_guard(Path(policy_path), public_keys, review_queue=_review_queue(), secrets_key=secrets_key)
+        baseline_path = os.environ.get("GATEWAY_DECISION_BASELINE")
+        if baseline_path:  # a fresh, queue-less copy per decision, so no replay touches live review state
+            require_no_loosening(json.loads(Path(baseline_path).read_text(encoding="utf-8")),
+                                 os.environ.get("GATEWAY_DECISION_DIGEST", ""),
+                                 lambda: load_guard(Path(policy_path), public_keys, secrets_key=secrets_key).guard)
+        return loaded
     except Exception as error:
         raise RuntimeError(
             f"GATEWAY_ENFORCE=true but the policy at {policy_path} could not be loaded "
             f"({type(error).__name__}: {error}) — refusing to start rather than run observe-only "
             "under a name that implies enforcement is on.") from error
 
-
-def _bootstrap_keys(keys: GatewayKeys, *, persisted: bool) -> None:
-    """Issuing a bootstrap key is meant as a one-time setup step, not something to repeat on
-    every restart: with a persistent store, a still-valid pair from an earlier run is left alone
-    (and not reprinted — the secret was only ever shown once) rather than minting an unbounded
-    pile of bootstrap credentials that all stay valid at once."""
-    if persisted and keys.has_active_label("bootstrap-admin") and keys.has_active_label("bootstrap-target"):
-        print("purpleteam gateway: existing bootstrap keys (persisted) are still valid — not "
-             "issuing new ones. Mint and switch to real, per-agent keys, or delete the key store "
-             "to force a fresh bootstrap pair.", file=sys.stderr)
-        return
-    ttl = float(os.environ.get("GATEWAY_BOOTSTRAP_TTL_SECONDS", _BOOTSTRAP_TTL))
-    budget = {"max_requests": int(os.environ.get("GATEWAY_BOOTSTRAP_MAX_REQUESTS", _BOOTSTRAP_BUDGET["max_requests"])),
-             "per_minute": int(os.environ.get("GATEWAY_BOOTSTRAP_PER_MINUTE", _BOOTSTRAP_BUDGET["per_minute"]))}
-    admin = keys.issue("bootstrap-admin", ADMIN, ttl_seconds=ttl, **budget)
-    target = keys.issue("bootstrap-target", TARGET, ttl_seconds=ttl, **budget)
-    survive = "survive a restart (GATEWAY_KEYS_FILE is set)" if persisted else "do not survive a restart"
-    print(f"purpleteam gateway: bootstrap keys issued (shown once; expire in {ttl:.0f}s; {survive}). "
-         "The target key is unbound to any one agent — that is required for multi-agent discovery "
-         "to see every agent's traffic, not a mistake — so treat it as a setup credential: mint "
-         "per-agent keys once discovery has run, and stop using this one. A log collector that "
-         "retains stderr will retain these; rotate promptly.", file=sys.stderr)
-    print(f"  admin key:  {admin}", file=sys.stderr)
-    print(f"  target key: {target}", file=sys.stderr)
 
 
 def _ledger(redactor) -> AuditLedger | RepinningLedger | None:
@@ -230,7 +230,7 @@ def build_app():
     observer = GatewayObserver()
     keys_file = os.environ.get("GATEWAY_KEYS_FILE")
     keys = GatewayKeys(store=FileKeyStore(keys_file) if keys_file else None)
-    _bootstrap_keys(keys, persisted=bool(keys_file))
+    bootstrap_keys(keys, persisted=bool(keys_file))
     containment = None
     if _bool("GATEWAY_LIVE_CONTAINMENT", False):
         if policy is None or policy.manifest is None:
@@ -277,7 +277,7 @@ def _check_transport() -> None:
         "refusing to start: this process serves plain HTTP. Put a TLS-terminating load balancer, "
         "ingress or sidecar in front of it and set GATEWAY_TLS_TERMINATED_UPSTREAM=true once that "
         "is confirmed — otherwise bearer keys and model traffic cross the network in the clear by "
-        "default. With no such proxy, call purpleteam.gateway.serve(...) directly with certfile/"
+        "default. With no such proxy, call purpleteam.gateway_serve.serve(...) directly with certfile/"
         "keyfile instead, so this process terminates TLS itself.")
 
 

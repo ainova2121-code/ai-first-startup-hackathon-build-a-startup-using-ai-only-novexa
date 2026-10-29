@@ -8,8 +8,9 @@ import pytest
 
 from purpleteam.defender.selector import Defender, Finding
 from purpleteam.discovery import DiscoveredTool, TargetProfile
+from purpleteam.oversight import HumanReviewGate, ReviewQueue
 from purpleteam.patches.base import Blocked
-from purpleteam.patches.rules import ArgumentAllowlist, SqlFirewall, ToolGate
+from purpleteam.patches.rules import ArgumentAllowlist, SqlFirewall
 
 
 def _raises_blocked(fn) -> bool:
@@ -18,10 +19,11 @@ def _raises_blocked(fn) -> bool:
     return True
 
 
-def test_tool_gate_blocks_only_its_tools():
-    gate = ToolGate({"update_vendor_bank"})
+def test_human_review_gate_holds_only_its_scoped_agent_tool_pairs():
+    gate = HumanReviewGate({("vendor", "update_vendor_bank")}, ReviewQueue())
     assert _raises_blocked(lambda: gate.authorize("vendor", "update_vendor_bank", {"bank_account": "X"}))
-    gate.authorize("vendor", "lookup_vendor", {"name": "a"})  # does not raise
+    gate.authorize("vendor", "lookup_vendor", {"name": "a"})  # a different tool does not raise
+    gate.authorize("other-agent", "update_vendor_bank", {"bank_account": "X"})  # a different agent does not raise
 
 
 def test_argument_allowlist_blocks_unverified_value():
@@ -45,10 +47,43 @@ def test_defender_blocks_the_breached_tool():
     defense = Defender(profile).select(Finding("injection_action", "update_vendor_bank", "vendor"))
     # P4 (the tool gate) always applies; P2 (the LLM Guard scanner) only when its backend is loadable.
     assert "P4" in defense.patch_ids
-    assert _raises_blocked(
-        lambda: defense.guard.authorize("vendor", "update_vendor_bank", {"bank_account": "X"})
-    )
+    from purpleteam.patches.base import HoldForReview
+    with pytest.raises(HoldForReview):
+        defense.guard.authorize("vendor", "update_vendor_bank", {"bank_account": "X"})
     assert all(p["hash"] for p in defense.applied)  # patches pinned by code hash for the audit trail
+
+
+def test_p4_never_gates_a_different_agents_same_named_tool():
+    """select_all's dedup must not merge two agents' P4 findings into one shared hold/approval
+    just because they happened to breach a tool with the same name."""
+    profile = TargetProfile("lp", [
+        DiscoveredTool("send_message", "", {}, "", "write", "support"),
+        DiscoveredTool("send_message", "", {}, "", "write", "billing"),
+    ])
+    findings = [Finding("injection_action", "send_message", "support"),
+               Finding("injection_action", "send_message", "billing")]
+    defense = Defender(profile).select_all(findings)
+    from purpleteam.patches.base import HoldForReview
+    with pytest.raises(HoldForReview):
+        defense.guard.authorize("support", "send_message", {"to": "x"})
+    with pytest.raises(HoldForReview):
+        defense.guard.authorize("billing", "send_message", {"to": "x"})
+    defense.guard.authorize("some-other-agent", "send_message", {"to": "x"})  # never in scope, not held
+
+
+def test_p8_only_guards_the_tool_the_finding_actually_named():
+    """The real bug: P8 used to attach to every EXECUTE-risk tool in the whole profile, including
+    a shell/code tool with no 'sql' argument -- which can never parse as a valid SELECT, so it was
+    blocked outright for the wrong reason. Only the breaching tool should ever be guarded."""
+    profile = TargetProfile("lp", [
+        DiscoveredTool("query_ledger", "", {}, "", "execute", "inquiry"),
+        DiscoveredTool("run_shell_command", "", {}, "", "execute", "inquiry"),
+    ])
+    defense = Defender(profile).select(Finding("sql_injection", "query_ledger", "inquiry"))
+    assert "P8" in defense.patch_ids
+    with pytest.raises(Blocked):
+        defense.guard.authorize("inquiry", "query_ledger", {"sql": "DROP TABLE t"})
+    defense.guard.authorize("inquiry", "run_shell_command", {"cmd": "ls"})  # not swept in, never blocked
 
 
 # --- secrets: redaction (P9) and the egress guard (P10) ------------------------------------------

@@ -40,7 +40,8 @@ from typing import Any
 
 from purpleteam.adapter import PROPOSED, REPORTED, ToolCall
 from purpleteam.capture import DiscoveryError
-from purpleteam.discovery import AgentInfo, DiscoveredTool, TargetProfile, classify_risk
+from purpleteam.discovery import (
+    AgentInfo, DiscoveredTool, TargetProfile, classify_risk, is_memory_surface, is_retrieval_surface)
 from purpleteam.gateway_dialects import OPENAI, Dialect, Exchange
 from purpleteam.identity import valid_name
 
@@ -217,9 +218,11 @@ class GatewayObserver:
         if not valid_name(name):
             self._error(f"tool name {str(name)[:40]!r} of agent {agent.name!r} is not a plain name")
         elif name not in agent.tools and len(agent.tools) < MAX_TOOLS:
-            agent.tools[name] = DiscoveredTool(name, description, schema, "gateway",
-                                               classify_risk(name, description, schema), "gateway",
-                                               agent_name=agent.name)
+            risk = classify_risk(name, description, schema)
+            agent.tools[name] = DiscoveredTool(name, description, schema, "gateway", risk, "gateway",
+                                               agent_name=agent.name,
+                                               retrieval=is_retrieval_surface(name, description),
+                                               memory=is_memory_surface(name, description, risk))
 
     def _record_call(self, agent: _Agent, conversation: str, origin: str, key: str | None, name: Any,
                      raw: Any) -> ToolCall | None:

@@ -8,6 +8,7 @@ real model, not keyword matching. The output redactor removes secrets found by t
 
 from __future__ import annotations
 
+import threading
 from functools import lru_cache
 from typing import Callable
 
@@ -37,6 +38,9 @@ def _ensure_tf_stub() -> None:
     _LazyModule.__getattr__ = patched
 
 
+_MODEL_LOCK = threading.Lock()  # one shared model object; parallel replays must not run it concurrently
+
+
 @lru_cache(maxsize=1)
 def _prompt_injection_scanner():
     _ensure_tf_stub()
@@ -50,8 +54,20 @@ def llm_guard_injection(text: str) -> bool:
     """True if LLM Guard flags the text as a prompt injection."""
     if not text.strip():
         return False
-    _sanitized, is_valid, _risk = _prompt_injection_scanner().scan(text)
+    with _MODEL_LOCK:  # inference takes milliseconds; serializing it costs nothing next to model calls
+        _sanitized, is_valid, _risk = _prompt_injection_scanner().scan(text)
     return not is_valid
+
+
+def warm_injection_backend() -> None:
+    """Load the classifier ahead of the first patch (it is cached once loaded). Best effort: if it
+    cannot load, the patch reports itself unavailable exactly as it would have without the warm-up."""
+    try:
+        if injection_backend_available():
+            with _MODEL_LOCK:
+                _prompt_injection_scanner()
+    except Exception:
+        pass
 
 
 def injection_backend_available() -> bool:

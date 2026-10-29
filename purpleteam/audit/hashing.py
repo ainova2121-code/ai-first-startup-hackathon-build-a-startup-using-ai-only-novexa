@@ -49,6 +49,19 @@ def merkle_root(hashes: list[str]) -> str:
     return _tree_hash([_leaf(h) for h in hashes]).hex()
 
 
+def merkle_tree(hashes: list[str]) -> dict | None:
+    """The whole tree ``merkle_root`` folds, built by the same leaf and node functions, for display:
+    ``{"hash", "leaf": seq}`` at the bottom, ``{"hash", "left", "right"}`` above. Its top hash is the root."""
+    def build(seqs: list[int]) -> dict:
+        if len(seqs) == 1:
+            return {"hash": _leaf(hashes[seqs[0]]).hex(), "leaf": seqs[0]}
+        k = _split(len(seqs))
+        left, right = build(seqs[:k]), build(seqs[k:])
+        return {"hash": _node(bytes.fromhex(left["hash"]), bytes.fromhex(right["hash"])).hex(), "left": left, "right": right}
+
+    return build(list(range(len(hashes)))) if hashes else None
+
+
 def inclusion_path(hashes: list[str], index: int) -> list[str]:
     """The sibling hashes that tie leaf ``index`` to the root of ``hashes``."""
     if not 0 <= index < len(hashes):

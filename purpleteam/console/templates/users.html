@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Users - purpleteam console{% endblock %}
+{% block content %}
+<h1>Console users</h1>
+<table>
+    <thead><tr><th>Email</th><th>Role</th><th>Status</th></tr></thead>
+    <tbody>
+        {% for user in users %}
+        <tr>
+            <td>{{ user.email }}</td>
+            <td class="mono">{{ user.role }}</td>
+            <td>{{ "disabled" if user.disabled else "active" }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<h2>Add a user</h2>
+<div class="card">
+    <form method="post" action="/users">
+        <label for="email">Email</label>
+        <input id="email" name="email" type="email" required>
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" required>
+        <label for="role">Role</label>
+        <select id="role" name="role">
+            <option value="admin">admin</option>
+            <option value="analyst">analyst</option>
+            <option value="auditor">auditor</option>
+        </select>
+        <button type="submit">Add user</button>
+        {% if error %}<div class="error">{{ error }}</div>{% endif %}
+    </form>
+</div>
+{% endblock %}

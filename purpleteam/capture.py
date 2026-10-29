@@ -53,12 +53,16 @@ class UnbuiltAgent:
         raise RuntimeError(f"agent '{self._name}' was built for discovery only and cannot run")
 
 
+OnFound = Callable[[AgentInfo, list[DiscoveredTool]], None]
+
+
 class AgentCapture:
-    def __init__(self) -> None:
+    def __init__(self, on_found: OnFound | None = None) -> None:
         self.agents: list[AgentInfo] = []
         self.tools: list[DiscoveredTool] = []
         self.errors: list[str] = []
         self.closed = False  # once set, a wrapper that survived the block just calls the real function
+        self._on_found = on_found  # told about each agent the moment the target constructs it
 
     def record(self, name: Any, prompt: str, tools: list[Any]) -> None:
         if not valid_name(name):
@@ -67,8 +71,14 @@ class AgentCapture:
         for tool in described:
             if not valid_name(tool.name):
                 raise ValueError(f"tool name {str(tool.name)[:40]!r} of agent {name!r} is not a plain name")
-        self.agents.append(AgentInfo(name, prompt, tuple(t.name for t in described)))
+        agent = AgentInfo(name, prompt, tuple(t.name for t in described))
+        self.agents.append(agent)
         self.tools.extend(described)
+        if self._on_found is not None:
+            try:
+                self._on_found(agent, described)
+            except Exception as error:  # a listener must never change what was discovered
+                self.errors.append(f"discovery listener failed: {type(error).__name__}")
 
     def profile(self, name: str) -> TargetProfile:
         return TargetProfile(name, list(self.tools), list(self.agents))
@@ -167,8 +177,8 @@ def _wrap(original: Any, capture: AgentCapture, build_graphs: bool) -> Any:
 
 
 @contextmanager
-def capture_agents(*, build_graphs: bool = False) -> Iterator[AgentCapture]:
-    capture = AgentCapture()
+def capture_agents(*, build_graphs: bool = False, on_found: OnFound | None = None) -> Iterator[AgentCapture]:
+    capture = AgentCapture(on_found)
     wrappers: dict[int, tuple[Any, Any]] = {}  # id(wrapper) -> (wrapper, original)
     with _LOCK:
         try:
@@ -189,9 +199,11 @@ def capture_agents(*, build_graphs: bool = False) -> Iterator[AgentCapture]:
                         namespace[attribute] = entry[1]
 
 
-def profile_runtime(name: str, build: Callable[[], Any], *, build_graphs: bool = False) -> TargetProfile:
-    """Build the target once under observation and return what it was seen to contain."""
-    with capture_agents(build_graphs=build_graphs) as capture:
+def profile_runtime(name: str, build: Callable[[], Any], *, build_graphs: bool = False,
+                    on_found: OnFound | None = None) -> TargetProfile:
+    """Build the target once under observation and return what it was seen to contain; ``on_found`` hears about
+    each agent (with its tools) the moment it is constructed, for a caller showing discovery as it happens."""
+    with capture_agents(build_graphs=build_graphs, on_found=on_found) as capture:
         build()
     if capture.errors or not capture.agents:
         detail = "; ".join(capture.errors) or "no agent construction was observed"

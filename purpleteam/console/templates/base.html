@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}purpleteam console{% endblock %}</title>
+    <link rel="stylesheet" href="/static/console.css">
+    <script src="/static/htmx.min.js"></script>
+    <script src="/static/htmx-sse.js"></script>
+</head>
+<body>
+{% if session %}
+<nav>
+    <span class="brand">purpleteam</span>
+    <a href="/">Fleet</a>
+    {% if session.role == "admin" %}
+    <a href="/targets">Targets</a>
+    <a href="/users">Users</a>
+    {% endif %}
+    <span class="muted">{{ session.email }} &middot; {{ session.role }}</span>
+    <form method="post" action="/logout"><button type="submit" style="margin:0;background:transparent;color:var(--muted);border:1px solid var(--border);padding:6px 12px;">Sign out</button></form>
+</nav>
+{% endif %}
+<main>
+{% block content %}{% endblock %}
+</main>
+</body>
+</html>

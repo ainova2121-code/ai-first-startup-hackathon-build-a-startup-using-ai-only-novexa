@@ -16,11 +16,15 @@ import hashlib
 import inspect
 from typing import Any
 
-__all__ = ["Blocked", "Patch", "CompositeGuard"]
+__all__ = ["Blocked", "HoldForReview", "Patch", "CompositeGuard"]
 
 
 class Blocked(Exception):
     """Raised by a patch to stop untrusted text or a tool call."""
+
+
+class HoldForReview(Blocked):
+    """Raised when a tool call must be held for an out-of-band human decision."""
 
 
 class Patch:

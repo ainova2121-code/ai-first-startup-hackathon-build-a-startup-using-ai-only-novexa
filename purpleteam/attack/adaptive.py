@@ -60,12 +60,15 @@ async def run_adaptive(
     technique: str = "tap",
     attack_id: str | None = None,
     adversarial_model: str | None = None,
+    system_prompt: str = ATTACKER_SYSTEM_PROMPT,
     tree_width: int = 3,
     tree_depth: int = 3,
     timeout: float | None = 300,
 ) -> CorpusResult:
     """Search for a working attack with PAIR or TAP rather than replaying a fixed template.
-    ``objective`` names the specific thing to achieve (see ``attack.corpus.action_objective``)."""
+    ``objective`` names the specific thing to achieve (see ``attack.corpus.action_objective``).
+    ``system_prompt`` defaults to the generic brief; pass ``runner.attacker_system_prompt(agent_info)``
+    to brief the adversarial model with the target's own real discovered instructions, when captured."""
     if technique not in TECHNIQUES:
         raise ValueError(f"unknown technique {technique!r}; choose from {', '.join(TECHNIQUES)}")
     await initialize_pyrit_async(IN_MEMORY, silent=True)
@@ -74,7 +77,7 @@ async def run_adaptive(
     attack = TECHNIQUES[technique](
         objective_target=pyrit_target,
         attack_adversarial_config=AttackAdversarialConfig(
-            target=adversarial_target(adversarial_model), system_prompt=ATTACKER_SYSTEM_PROMPT),
+            target=adversarial_target(adversarial_model), system_prompt=system_prompt),
         attack_scoring_config=_scoring_config(adversarial_model),
         tree_width=tree_width, tree_depth=tree_depth, **kwargs,
     )
@@ -100,12 +103,13 @@ async def classify_search(pyrit_target: PlatformPromptTarget, oracle: Oracle, at
     summary = summarize(trials)
     if summary.outcome == BREACHED:
         index = next(i for i, t in enumerate(trials) if t.outcome == BREACHED)
-        payload, winning_observation = pairs[index]
-        signals = await scan_observation(winning_observation)
+        payload, observation = pairs[index]
+        signals = await scan_observation(observation)
     else:
-        payload = pairs[-1][0] if pairs else objective
+        payload, observation = pairs[-1] if pairs else (objective, None)
         signals = []
-    return as_corpus_result(attack_id, technique, summary, payload, signals)
+    return as_corpus_result(attack_id, technique, summary, payload, signals,
+                            reply=observation.reply if observation else "")
 
 
 async def _main() -> None:

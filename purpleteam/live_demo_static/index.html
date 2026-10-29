@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>purpleteam — live run</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css?v=41">
+<link rel="stylesheet" href="/static/ledger.css?v=41">
+<link rel="stylesheet" href="/static/discovery.css?v=41">
+</head>
+<body>
+<header class="topbar">
+  <div class="cluster">
+    <div class="brand"><span class="brand-mark"></span>purpleteam</div>
+    <span id="targetChip" class="chip"><span class="dot"></span>target not yet discovered</span>
+  </div>
+  <nav class="tabs" aria-label="Pages">
+    <a href="#/run" data-route="run">Live run</a>
+    <a href="#/discovery" data-route="discovery">Discovery</a>
+    <a href="#/files" data-route="files">Patched files <span id="filesCount" class="count hidden"></span></a>
+    <a href="#/drift" data-route="drift">Decision drift</a>
+    <a href="#/ledger" data-route="ledger">Audit ledger</a>
+  </nav>
+  <div class="cluster">
+    <label class="faint" for="runPicker">Run</label>
+    <select id="runPicker" class="picker"><option value="live">Current run</option></select>
+    <span id="runChip" class="chip">idle</span>
+    <button id="restoreBtn" class="btn" title="Put every file the platform edited back to its original bytes">
+      Restore original files<span id="modifiedCount" class="count hidden"></span>
+    </button>
+    <div class="mode-switch" role="group" aria-label="Run mode">
+      <button type="button" data-mode="static" aria-pressed="false" title="Seconds · inspection only: discovery, posture, source scan, prompt rules, catalog fixes. No attacks, no release verdict.">Static</button>
+      <button type="button" data-mode="full" aria-pressed="true" title="Minutes · claim attacks and PyRIT jailbreak / prompt-injection templates against the unpatched agent, patch, re-attack with the same payloads, verified source fixes, signed and anchored verdict.">Full</button>
+      <button type="button" data-mode="advanced" aria-pressed="false" title="Longest · full plus base64-disguised and document-buried variants of every attack, 5 verification trials.">Advanced</button>
+    </div>
+    <button id="startBtn" class="btn primary">Start run</button>
+  </div>
+</header>
+
+<main>
+  <div id="modeNote" class="mode-note faint">Minutes · claim attacks and PyRIT jailbreak / prompt-injection templates against the unpatched agent, patch, re-attack with the same payloads, verified source fixes, signed and anchored verdict.</div>
+  <div id="errorBanner" class="banner error hidden"></div>
+  <div id="infoBanner" class="banner info hidden"></div>
+  <div id="historyBanner" class="banner info hidden"></div>
+
+  <section class="page" data-page="run">
+    <div id="stepBar" class="steps"></div>
+    <div id="discoverySummary" class="banner info hidden"></div>
+    <div class="columns">
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">Attack console</div>
+            <div id="attackSub" class="panel-sub">every attack against the unpatched agent, grouped by type · not started</div>
+          </div>
+        </div>
+        <div id="feed" class="feed"><div class="muted">Attacks appear here once discovery finishes.</div></div>
+      </section>
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <div class="panel-title">Defense</div>
+            <div class="panel-sub">Runtime guards change no file. Only files the platform really edited are shown.</div>
+          </div>
+        </div>
+        <div id="defense" class="defense"><div class="muted">Nothing patched yet.</div></div>
+      </section>
+    </div>
+    <section id="verdictPanel" class="panel hidden">
+      <div class="panel-head"><div class="panel-title">Verdict</div></div>
+      <div class="panel-body">
+        <div id="verdictHead" class="verdict-head"></div>
+        <div id="gateList" class="gate"></div>
+        <div id="scorecard" class="stats" style="margin-top: 14px"></div>
+        <div id="explanations" class="findings"></div>
+      </div>
+    </section>
+  </section>
+
+  <section class="page" data-page="discovery">
+    <div class="dm-head">
+      <div>
+        <div class="dm-title">Agent discovery</div>
+        <div class="muted">Agents, tools and handoffs, found by the platform and confirmed by real traffic. Prompts are fingerprinted, never shown.</div>
+      </div>
+      <div class="dm-actions"><button id="dmReplayBtn" class="btn" type="button">▶ Replay discovery</button><div id="dmStatus" class="dm-status"></div></div>
+    </div>
+    <div class="dm">
+      <section class="dm-stage" data-fullscreen>
+        <button type="button" class="expand-btn" title="Full screen" aria-label="Show the discovery map full screen">⛶</button>
+        <div id="discoveryEmpty" class="muted dm-empty">No discovery yet — start a run.</div>
+        <div class="dm-scroll"><div id="dmCanvas" class="dm-canvas"></div></div>
+        <div class="dm-legend"><span class="dm-key observed"></span>Observed (ran in this run)
+          <span class="dm-key declared"></span>Declared (found, not yet run)<span class="dm-key candidate"></span>Candidate (traffic only)
+          <span class="faint">· the map changes only when evidence arrives</span></div>
+      </section>
+      <aside class="dm-side">
+        <section id="dmDetail" class="mx-card hidden"></section>
+        <section class="mx-card">
+          <div class="mx-card-head"><div class="mx-card-title">Discovery events</div><span class="dm-live"><span class="dm-dot live"></span>LIVE</span></div>
+          <div id="dmFeed" class="dm-feed"></div>
+        </section>
+      </aside>
+    </div>
+    <div id="dmStats" class="dm-stats"></div>
+    <div id="postureList" class="findings"></div>
+  </section>
+
+  <section class="page" data-page="files">
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Patched files</div>
+          <div class="panel-sub">Only files the platform really edited on disk, each shown whole with the change in place.</div>
+        </div>
+      </div>
+      <div class="panel-body">
+        <div id="filesEmpty" class="muted">No file was modified in this run. Runtime guards change no file.</div>
+        <div id="filesList" class="defense flat"></div>
+        <div id="skippedList" class="findings"></div>
+      </div>
+    </section>
+  </section>
+
+  <section class="page" data-page="drift">
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Policy-decision drift</div>
+          <div class="panel-sub">Every decision the verified defense made — each tool call allowed, held or blocked, each text passed,
+            redacted or stopped — pinned with its exact inputs. Any other policy is replayed against them: no model, no target, no noise.</div>
+        </div>
+      </div>
+      <div class="panel-body">
+        <div id="driftHead" class="stats"></div>
+        <h3 class="section-title">Against the last approved run</h3>
+        <div id="driftCompare"></div>
+        <h3 class="section-title">What if a patch were removed?</h3>
+        <div id="whatIf" class="filters"></div>
+        <div id="whatIfResult"></div>
+      </div>
+    </section>
+  </section>
+
+  <section class="page" data-page="ledger">
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Audit ledger</div>
+          <div class="panel-sub">Every signed event of the run, in order, re-verified from disk against the checkpoint it was sealed with.</div>
+        </div>
+      </div>
+      <div class="panel-body">
+        <div id="ledgerHead" class="verdict-head"></div>
+        <div class="mx">
+          <section class="mx-main" data-fullscreen>
+            <div class="mx-card-head">
+              <div><div class="mx-card-title">Merkle tree</div><div id="merkleSub" class="muted"></div></div>
+              <div class="mx-legend"><span class="mx-dot ok"></span>Proof path<span class="mx-dot off"></span>Sibling branch
+                <span class="faint">· click any event · scroll to zoom · drag to move</span>
+                <span class="mx-zoom"><button type="button" data-mx-zoom="out" aria-label="Zoom out">−</button><span id="mxZoomLabel"></span><button type="button" data-mx-zoom="in" aria-label="Zoom in">+</button><button type="button" data-mx-zoom="focus" aria-label="Zoom to the event being signed">Focus</button><button type="button" data-mx-zoom="fit" aria-label="Fit the tree to the width">Fit</button></span>
+                <button type="button" class="expand-btn" title="Full screen" aria-label="Show the Merkle tree full screen">⛶</button></div>
+            </div>
+            <div id="merkleTree"></div>
+          </section>
+          <aside class="mx-side">
+            <section id="mxCheckpoint" class="mx-card"></section>
+            <section id="mxProof" class="mx-card"></section>
+          </aside>
+        </div>
+        <section id="mxAnchors" class="mx-strip"></section>
+        <div id="signingFlow" class="mx-strip" data-fullscreen></div>
+        <div id="signingDetail" class="sf-detail"></div>
+        <h3 class="section-title">Every signed event</h3>
+        <div id="ledgerFilters" class="filters"></div>
+        <div id="ledgerTable" class="ledger"></div>
+      </div>
+    </section>
+  </section>
+</main>
+<script src="/static/render.js?v=41"></script>
+<script src="/static/ledger.js?v=41"></script>
+<script src="/static/drift.js?v=41"></script>
+<script src="/static/signing.js?v=41"></script>
+<script src="/static/merkle.js?v=41"></script>
+<script src="/static/merkle_zoom.js?v=41"></script>
+<script src="/static/discovery.js?v=41"></script>
+<script src="/static/discovery_panels.js?v=41"></script>
+<script src="/static/feed.js?v=41"></script>
+<script src="/static/expand.js?v=41"></script>
+<script src="/static/app.js?v=41"></script>
+</body>
+</html>

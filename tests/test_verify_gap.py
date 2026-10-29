@@ -83,12 +83,18 @@ def test_a_finding_kind_the_catalog_has_no_patch_for_is_reported_as_an_error_not
     assessment = Assessment(lambda guard: _Mystery(), _UnknownKindOracle(), PROFILE, ledger, legit=[])
     report = asyncio.run(assessment.run([ATTACK]))
 
-    assert report.defense is not None and report.defense.patch_ids == []  # nothing in the catalog matched
+    # Nothing in the catalog answers this kind; the replay kept breaching, so the defender escalated to
+    # its last level and denied the breached tool to that agent. Containment, but still a catalog gap:
+    assert report.defense is not None and report.defense.patch_ids == ["P11"]
+    assert "denied: vendor.update_vendor_bank" in report.defense.applied[0]["summary"]
     assert report.verification is not None and report.verification.errored
     assert any("mystery_kind" in e for e in report.verification.errors)
     assert not report.safe_to_ship
 
-    (patch_event,) = [e for e in ledger.events() if e["kind"] == "patch"]
+    # the incremental defend (fired the instant the breach proved out) can't yet know about this
+    # catalog gap -- it only ever becomes a reported error on the final, authoritative pass, so
+    # that is the one these assertions check, not just any "patch"/"verdict" entry
+    patch_event = [e for e in ledger.events() if e["kind"] == "patch"][-1]
     assert patch_event["payload"]["unpatched"] == ["mystery_kind"]
-    (verdict_event,) = [e for e in ledger.events() if e["kind"] == "verdict"]
+    verdict_event = [e for e in ledger.events() if e["kind"] == "verdict"][-1]
     assert verdict_event["payload"]["safe_to_ship"] is False

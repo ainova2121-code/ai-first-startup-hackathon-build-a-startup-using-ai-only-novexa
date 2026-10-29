@@ -8,7 +8,7 @@ from langchain_core.messages import HumanMessage
 from langchain_core.tools import BaseTool, StructuredTool
 from langgraph.graph.state import CompiledStateGraph
 
-from ledgerpilot.ports import Blocked, EventSink, Guard
+from ledgerpilot.ports import Blocked, EventSink, Guard, ReviewRequired
 
 
 class Agent:
@@ -54,6 +54,14 @@ class AgentFactory:
                 self._guard.authorize(agent, spec.name, args)
                 self._sink.emit(agent, "tool_call", {"tool": spec.name, "args": args})
                 result = self._guard.screen(agent, json.dumps(func(**args), default=str), "tool_result")
+            except ReviewRequired as exc:
+                self._sink.emit(agent, "review_required", {
+                    "tool": spec.name, "args": args, "reason": str(exc),
+                })
+                hold_for_review = getattr(self._sink, "hold_for_review", None)
+                if hold_for_review is None:
+                    return f"Held for human review: {spec.name}"
+                return hold_for_review(agent, spec.name, args, str(exc))
             except Blocked as exc:
                 self._sink.emit(agent, "blocked", {"tool": spec.name, "reason": str(exc)})
                 return f"Blocked: {exc}"

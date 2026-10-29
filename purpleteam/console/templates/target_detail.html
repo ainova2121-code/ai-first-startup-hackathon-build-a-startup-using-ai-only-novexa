@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}{{ target.name }} - purpleteam console{% endblock %}
+{% block content %}
+<a href="/" class="muted">&larr; Fleet</a>
+<h1>{{ target.name }}</h1>
+<p class="mono muted">{{ target.base_url }} &middot; log {{ (target.log_id or "none")[:16] }}</p>
+{% if session.role != "auditor" %}<a href="/targets/{{ target.id }}/activity" class="button">Raw activity</a>{% endif %}
+
+{% if fetch_error %}
+<p class="error">Could not fetch a live view: {{ fetch_error }}</p>
+{% else %}
+
+<h2>Sealed runs</h2>
+{% if not runs %}
+<p class="muted">No sealed assessment run found yet on this target's ledger.</p>
+{% else %}
+<table>
+    <thead><tr><th>#</th><th>Verdict</th><th>Breach kinds</th><th>Patches applied</th><th>Sealed</th></tr></thead>
+    <tbody>
+        {% for run in runs | reverse %}
+        <tr>
+            <td class="mono">{{ run.seq }}</td>
+            <td><span class="badge {{ 'held' if run.safe_to_ship else 'breach' }}">
+                {{ "safe to ship" if run.safe_to_ship else "not safe" }}</span></td>
+            <td class="mono">{{ run.breach_kinds | join(", ") or "-" }}</td>
+            <td class="mono">{{ run.patch_ids | join(", ") or "-" }}</td>
+            <td class="mono">{{ run.sealed_at }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+
+<h2>Compliance evidence</h2>
+{% if not compliance %}
+<p class="muted">No evidenced regulatory clauses on this ledger yet.</p>
+{% else %}
+<table>
+    <thead><tr><th>Clause</th><th>Description</th><th>Events</th></tr></thead>
+    <tbody>
+        {% for key, entry in compliance.items() | sort %}
+        <tr>
+            <td class="mono">{{ key }}</td>
+            <td>{{ entry.control.description }}</td>
+            <td class="mono">{{ entry.events | length }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+
+{% endif %}
+{% endblock %}

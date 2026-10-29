@@ -64,3 +64,17 @@ def test_revoking_an_already_gone_key_reports_nothing_rather_than_raising():
     keys = GatewayKeys()
     containment = LiveContainment(PLAIN, keys)
     assert containment.observe_block("identity_mismatch", "vendor", "lookup_vendor", key_id="nope") is None
+
+
+def test_repeating_an_already_tool_denied_call_reports_nothing_further():
+    keys = GatewayKeys()
+    token = keys.issue("k", "target", ttl_seconds=3600, max_requests=10, agent="vendor")
+    key_id = token.split("_", 2)[1]
+    containment = LiveContainment(PLAIN, keys)
+
+    first = containment.observe_block("injection_action", "vendor", "update_vendor_bank", key_id)
+    assert first.level == "tool_denied"
+
+    for _ in range(5):
+        assert containment.observe_block("injection_action", "vendor", "update_vendor_bank", key_id) is None
+    assert keys.is_active(key_id)  # repeats of an already-closed door are not new breaches

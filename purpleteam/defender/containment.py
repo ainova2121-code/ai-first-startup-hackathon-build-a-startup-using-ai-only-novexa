@@ -16,7 +16,7 @@ Four levels, narrowest first:
 
 This module only decides and describes; it never calls a guard or a keyring itself. ``escalate``
 produces the updated ``PermissionManifest`` for the two levels that have one; ``held_for_review``
-is a catalog patch (``purpleteam.patches.rules.ToolGate``) and ``credential_revoked`` is a keyring
+is a catalog patch (``purpleteam.oversight.HumanReviewGate``) and ``credential_revoked`` is a keyring
 action (``purpleteam.gateway_keys.GatewayKeys.revoke``) — both already exist, so the caller applies
 them directly rather than this module wrapping them, the same separation ``Defender.select`` and
 ``Verifier`` already keep between deciding and acting.

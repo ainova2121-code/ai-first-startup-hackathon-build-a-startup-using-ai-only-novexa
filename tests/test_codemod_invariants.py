@@ -1,11 +1,24 @@
 """Independent AST checks, distinct from any scanner, for whether a dynamically built string
 still reaches a SQL execute call or a shell, and whether a secret is still a literal in source."""
 
-from purpleteam.codemods.invariants import INVARIANTS, no_dynamic_sql, no_hardcoded_secret, no_shell_injection
+import pytest
+
+from purpleteam.codemods.invariants import (INVARIANTS, no_code_execution, no_dynamic_sql, no_hardcoded_secret,
+                                            no_shell_injection, no_unsafe_deserialization, no_weak_hash,
+                                            requests_have_timeout, tls_verification_on)
+from purpleteam.sast import BANDIT_KINDS
 
 
 def test_a_parameterized_query_passes():
     assert no_dynamic_sql("cursor.execute('SELECT * FROM t WHERE id=?', (x,))") is None
+
+
+def test_parameters_passed_as_a_string_instead_of_a_tuple_fail():
+    """A real model-drafted "fix": the comma sits inside the f-string, so it is not a tuple and the
+    driver would bind it character by character -- scanner-clean, but broken."""
+    problem = no_dynamic_sql('conn.execute("SELECT * FROM v WHERE name LIKE ?", (f"%{name}%,"))')
+    assert problem is not None and "not a sequence" in problem
+    assert no_dynamic_sql('conn.execute("SELECT * FROM v WHERE name LIKE ?", (f"%{name}%",))') is None
 
 
 def test_an_f_string_query_fails():
@@ -43,8 +56,44 @@ def test_unparseable_source_is_reported_not_raised():
     assert problem is not None and "could not parse" in problem
 
 
-def test_registered_invariants_cover_exactly_these_three_kinds_today():
-    assert set(INVARIANTS) == {"sql_injection", "shell_injection", "hardcoded_secret"}
+def test_every_mapped_bandit_kind_has_an_invariant():
+    assert set(INVARIANTS) == set(BANDIT_KINDS.values())
+
+
+def test_sql_built_for_a_query_helper_is_caught_not_only_direct_execute_calls():
+    assert no_dynamic_sql('row = self._one(f"SELECT * FROM {table} WHERE id = ?", row_id)') is not None
+    assert no_dynamic_sql('row = self._one({"vendors": "SELECT * FROM vendors WHERE id = ?"}[table], row_id)') is None
+    assert no_dynamic_sql('raise ValueError(f"unknown table {table!r}")') is None  # not SQL-shaped
+
+
+@pytest.mark.parametrize("source", [
+    'q = "SELECT * FROM {} WHERE id = 1".format(table)',
+    'q = "DELETE FROM t WHERE id = %s" % row',
+    'q = "  (select a from t where b = " + b + ")"',
+])
+def test_every_way_of_building_a_query_is_caught(source):
+    assert no_dynamic_sql(source) is not None
+
+
+def test_prose_that_mentions_select_and_from_is_not_mistaken_for_sql():
+    """Found on a real project: a scanner flagged this log line as SQL injection."""
+    assert no_dynamic_sql('logger.info(f"Using LLM to select {n} most relevant tools from {len(tools)}")') is None
+
+
+@pytest.mark.parametrize("checker, unsafe, safe", [
+    (no_code_execution, "eval(text)", "ast.literal_eval(text)"),
+    (no_unsafe_deserialization, "pickle.loads(blob)", "json.loads(blob)"),
+    (no_unsafe_deserialization, "yaml.load(text)", "yaml.load(text, Loader=yaml.SafeLoader)"),
+    (tls_verification_on, "requests.get(url, verify=False)", "requests.get(url, timeout=10)"),
+    (no_weak_hash, "hashlib.md5(data)", "hashlib.sha256(data)"),
+    (no_weak_hash, "hashlib.new('sha1', data)", "hashlib.sha1(data, usedforsecurity=False)"),
+    (no_shell_injection, "os.system(f'ls {d}')", "subprocess.run(['ls', d])"),
+    (requests_have_timeout, "requests.get(url)", "requests.get(url, timeout=30)"),
+    (requests_have_timeout, "httpx.post(url, timeout=None)", "httpx.post(url, timeout=10)"),
+])
+def test_each_invariant_rejects_the_unsafe_shape_and_accepts_the_fix(checker, unsafe, safe):
+    assert checker(unsafe) is not None
+    assert checker(safe) is None
 
 
 def test_a_literal_shell_true_command_passes():

@@ -1,16 +1,22 @@
-# One-host deployment: the gateway behind Caddy for automatic TLS (the gateway refuses to start
-# without confirming TLS is terminated upstream of it — see Dockerfile.gateway). Default
-# enforcement is off (observe-only) until you've reviewed what discovery finds and approved a
-# signed policy; see README.md for the full quickstart.
+# One-host deployment: the gateway (and, optionally, the fleet console) behind Caddy for
+# automatic TLS -- both refuse to start without confirming TLS is terminated upstream of them.
+# Default enforcement is off (observe-only) until you've reviewed what discovery finds and
+# approved a signed policy; see README.md for the full quickstart.
 #
-# Before the first run:
+# Before the first run (both .env files are required even if you only want the gateway running —
+# Caddy's own config loads both; just leave the console service stopped, see below):
 #   cp .env.gateway.example .env.gateway            # fill in your model provider, redactor secret
-#   cp deploy/Caddyfile.example deploy/Caddyfile     # set your real domain (or "localhost" to try it locally)
+#   cp .env.console.example .env.console             # fill in a console secret
+#   cp deploy/Caddyfile.example deploy/Caddyfile     # set your real domain(s) (or "localhost" to try locally)
 #   mkdir -p deploy/secrets && openssl rand -hex 32 > deploy/secrets/keyring_passphrase
 #
-# Then:
+# Then, the full stack:
 #   docker compose up -d
 #   docker compose logs gateway    # the one-time bootstrap admin/target keys print here ONCE — save them
+#   docker compose logs console    # the one-time bootstrap admin password prints here ONCE — save it
+#
+# Gateway only, no console: `docker compose up -d gateway tls` and remove the console site from
+# deploy/Caddyfile — CONSOLE_SECRET_KEY can be any placeholder in that case, since nothing reads it.
 
 services:
   gateway:
@@ -40,6 +46,29 @@ services:
     expose:
       - "8080"
 
+  # The fleet console, watching this gateway (and any others you register into it). Leave it
+  # stopped (docker compose up -d gateway tls) if you only want the gateway.
+  console:
+    build:
+      context: .
+      dockerfile: Dockerfile.console
+    image: ${CONSOLE_IMAGE:-purpleteam-console:local}
+    restart: unless-stopped
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs:
+      - /tmp
+    env_file:
+      - .env.console
+    environment:
+      CONSOLE_TLS_TERMINATED_UPSTREAM: "true"
+      CONSOLE_DB_PATH: /var/lib/purpleteam/console.db
+    volumes:
+      - console-state:/var/lib/purpleteam
+    expose:
+      - "8081"
+
   tls:
     image: caddy:2-alpine
     restart: unless-stopped
@@ -47,6 +76,7 @@ services:
       - gateway
     env_file:
       - .env.gateway
+      - .env.console
     ports:
       - "80:80"
       - "443:443"
@@ -56,6 +86,7 @@ services:
 
 volumes:
   gateway-state:
+  console-state:
   caddy-data:
 
 secrets:
