@@ -61,6 +61,28 @@ Clones the project into its own environment, finds its entry point by reading it
 agents and tools, and runs the same assessment. It executes that project's code on this machine in a
 separate process, not a container: assess only code you would run yourself, or run it inside a VM.
 
+## Additional attack channels
+
+The default assessment also includes multilingual probes (Spanish, Hindi, Bengali and Arabic) and a
+system-prompt extraction probe when discovery actually captured the agent prompt. Extraction is only
+reported as a breach when the exact discovered prompt is found in a reply, tool output, or tool-call
+arguments; prompt text
+is used as an in-memory proof marker and is not added to the ledger.
+
+For indirect/tool-output injection, `python -m purpleteam.demo_agentdojo` now includes payloads inserted
+into AgentDojo's configured data injection vector, then judges the resulting observed tool calls with
+the canary oracle. This demo currently exercises one AgentDojo workspace task, not the complete
+AgentDojo or InjecAgent benchmark suites.
+
+Unicode tag hiding is available as the `ascii_smuggler` disguise; the advanced disguise set also has
+Caesar, Atbash, Vigenere and 5x5 ASCII-art encodings. Pass selected names through
+`Assessment.run(disguise_with=[...])`. For a PDF ingestion endpoint, use
+`purpleteam.targets.http_document.HttpDocumentTarget` with an operator-authorized staging URL: it
+uploads a PDF whose instruction text is selectable by parsers but invisible when rendered, and takes
+tool-call evidence from the gateway observer. The PDF fixture is ASCII-only; Unicode-tag attacks are
+tested separately. This adapter provides the upload attack path; it does not automatically install a
+defense into the customer application.
+
 ## Deploy the live console (Azure, TPM-signed)
 
 [deploy/azure_windows.ps1](deploy/azure_windows.ps1) sets the console up on a Windows Server 2022 VM
