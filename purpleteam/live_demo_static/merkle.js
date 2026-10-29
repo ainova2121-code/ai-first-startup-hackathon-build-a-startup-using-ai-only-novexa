@@ -3,7 +3,8 @@
 // Every badge is derived from the server's step-by-step verification; nothing is shown as verified unless it was.
 "use strict";
 
-const MX_LEAF_W = 172, MX_GAP = 18, MX_ROW = 112, MX_TOP = 18, MX_CARD_H = 64;
+// Give leaves more horizontal room and separate levels vertically; only coordinates change, never tree shape or hashes.
+const MX_LEAF_W = 172, MX_GAP = 48, MX_ROW = 112, MX_TOP = 18, MX_CARD_H = 64;
 let mxSelected = null;
 const MX = { shown: null, pinned: false };  // hashes already on screen; did the reader pick a leaf
 
@@ -198,10 +199,14 @@ function renderCheckpointCard(view) {
       kv("Root hash", shortHash(c.root), c.root), kv("Tree height", String(layoutTree(view.tree).height)),
       kv("Checkpoint size", String(c.size)), kv("Signature", signers(c.checks)), kv("Signed by", `ledger key · key id ${shortHash(c.kid)}`, c.kid),
       add(el("div", `mx-tpm ${hw ? (hw.ok ? "ok" : "bad") : "off"}`), el("span", "mx-chip-icon small", "▣"),
-          el("span", null, hw ? `${hardwareName(c.hardware)} signature verified` : `No hardware signature: ${view.hardware_note || "not configured for this run"}`),
+          el("span", null, hw ? `${hardwareName(c.hardware)} signature verified${isSoftwareKey(c) ? " — no hardware on this host" : ""}`
+            : `No hardware signature: ${view.hardware_note || "not configured for this run"}`),
           badge(hw ? (hw.ok ? "VERIFIED" : "FAILED") : "NOT CONFIGURED", hw ? hw.ok : null)));
-  if (c.hardware) box.appendChild(kv("Hardware key", `${hardwareName(c.hardware)} · P-256 · ${shortHash(c.hwkid)}`, c.hwkid));
+  if (c.hardware) box.appendChild(kv(isSoftwareKey(c) ? "Checkpoint key" : "Hardware key",
+                                     `${hardwareName(c.hardware)} · P-256 · ${shortHash(c.hwkid)}`, c.hwkid));
 }
+
+function isSoftwareKey(c) { return Boolean(c && c.hardware && c.hardware.kind === "software"); }
 
 function hardwareName(hardware) {
   const kind = (hardware || {}).kind || "unknown";
@@ -265,7 +270,8 @@ function renderAnchors(view) {
   const anchorBox = stage("⏱", "Timestamp anchor (RFC 3161)", anchor.status, anchor.ok);
   anchorBox.title = anchor.title;
   const stages = [stage("✎", "Signed checkpoint", c ? (signed ? "VERIFIED" : "FAILED") : "PENDING", c ? Boolean(signed) : null),
-    stage("▣", hw ? `Hardware signature · ${hardwareName(c.hardware)}` : "Hardware signature",
+    stage("▣", isSoftwareKey(c) ? "Checkpoint co-signature · Software key"
+          : hw ? `Hardware signature · ${hardwareName(c.hardware)}` : "Hardware signature",
           hw ? (hw.ok ? "VERIFIED" : "FAILED") : c ? "NOT CONFIGURED" : "PENDING", hw ? hw.ok : null),
     anchorBox, stage("⛁", "Write-once storage", "NOT DETECTABLE HERE", null)];
   const flow = el("div", "mx-stages");

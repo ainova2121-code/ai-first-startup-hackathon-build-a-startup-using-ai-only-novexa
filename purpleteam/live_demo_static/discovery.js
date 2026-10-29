@@ -38,7 +38,7 @@ function dmReplay(events) {
 function dmReset() {
   Object.assign(DM, { agents: [], byName: {}, links: {}, edges: {}, queue: Promise.resolve(), selected: null, sources: new Set(),
                       requests: 0, pending: 0, done: false, discovered: false, order: 0, start: DM.runStart || Date.now(),
-                      generation: (DM.generation || 0) + 1 });
+                      autoReturnArmed: false, lastTraceAt: 0, generation: (DM.generation || 0) + 1 });
   clearInterval(DM.timer);
   for (const id of ["dmCanvas", "dmFeed", "dmStats", "dmDetail"]) $(id).textContent = "";
   $("dmDetail").classList.add("hidden");
@@ -126,10 +126,30 @@ function discoveryMap(e) {
     DM.discovered = true;
     dmStatus();
   }, 1600);  // a moment to take in the finished map
-  dmEnqueue(() => {  // started from the live run: discovery is done, so back to watch the attacks
-    if (DM.autoReturn && route() === "discovery") location.hash = "#/run";
-    DM.autoReturn = false;
-  }, 0);
+  // Started from the live run: don't leave on a timer. The green (observed) edges and agent→agent handoffs are
+  // only drawn once real traffic reaches the target in the attack phase, so hold here until the map has actually
+  // lit up and settled, then return to watch the attacks.
+  dmEnqueue(() => { if (DM.autoReturn) armAutoReturn(); }, 0);
+}
+
+// Wait until the discovery map is visibly alive -- at least one observed handoff drawn and the burst settled --
+// before pulling the viewer back to the run, with a hard cap so a sparse-traffic run never strands them.
+function armAutoReturn() {
+  DM.autoReturnArmed = true;
+  const armedAt = performance.now();
+  const tick = () => {
+    if (!DM.autoReturnArmed || !DM.autoReturn || route() !== "discovery") { DM.autoReturnArmed = false; return; }
+    const connected = Object.keys(DM.links).length > 0;                 // a real request crossed between agents
+    const settled = performance.now() - DM.lastTraceAt > 900;           // the latest hops have had a beat to draw
+    if ((connected && settled) || performance.now() - armedAt > 14000) {
+      DM.autoReturnArmed = false;
+      if (DM.autoReturn && route() === "discovery") location.hash = "#/run";
+      DM.autoReturn = false;
+      return;
+    }
+    setTimeout(tick, 250);
+  };
+  setTimeout(tick, 250);
 }
 
 function discoveryTrace(e) { dmTrace(e.calls || [], 0); }  // live traffic is already paced by reality
@@ -163,6 +183,7 @@ function dmRequest(size) {  // a new request arrived: one bar on the source's sp
 }
 
 function dmStep(from, agentName, toolName) {
+  DM.lastTraceAt = performance.now();  // a hop just drew green: the auto-return watcher waits for this to settle
   const agent = DM.byName[agentName] || dmAddAgent({ name: agentName }, true);
   const tool = agent.tools[toolName] || dmAddTool(agent, { name: toolName }, true);
   tool.count += 1;

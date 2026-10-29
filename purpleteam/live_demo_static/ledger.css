@@ -74,16 +74,17 @@
 .sf-detail, .sf-field { min-width: 0; }
 
 /* Merkle explorer */
-.mx { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 14px; margin-top: 14px; }
+.mx { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; margin-top: 14px; }
 .mx-main, .mx-card, .mx-strip { border: 1px solid var(--border); border-radius: 12px; background: var(--panel); padding: 16px 18px; min-width: 0; }
-.mx-side { display: grid; gap: 14px; align-content: start; min-width: 0; }
+.mx-side { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-content: start; min-width: 0; }
 .mx-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
 .mx-card-title { font-size: 17px; font-weight: 600; color: var(--text); }
 .mx-legend { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); flex-wrap: wrap; }
 .mx-legend .mx-dot { margin-left: 8px; }
 .mx-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: var(--text-faint); flex: none; }
 .mx-dot.ok { background: var(--sage); box-shadow: 0 0 8px rgba(63,185,107,.7); } .mx-dot.bad { background: var(--crimson); }
-.mx-scroll { overflow-x: auto; padding-bottom: 6px; }
+.mx-scroll { overflow-x: auto; padding-bottom: 6px; scrollbar-width: none; -ms-overflow-style: none; }
+.mx-scroll::-webkit-scrollbar { display: none; }
 .mx-canvas { position: relative; margin: 0 auto; }
 .mx-lines { position: absolute; inset: 0; pointer-events: none; overflow: visible; }
 .mx-edge { fill: none; stroke: var(--border); stroke-width: 1.5; }
@@ -136,7 +137,7 @@
 .mx-arrow { color: var(--text-faint); }
 .mx-final { display: flex; align-items: center; gap: 14px; padding: 8px 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--panel-alt); }
 @media (max-width: 1100px) { .mx { grid-template-columns: minmax(0, 1fr); } }
-@media (max-width: 640px) { .mx-kv { grid-template-columns: 1fr; } .mx-arrow { display: none; } }
+@media (max-width: 640px) { .mx-kv { grid-template-columns: 1fr; } .mx-arrow { display: none; } .mx-side { grid-template-columns: minmax(0, 1fr); } }
 .mx-stage, .mx-final { flex-wrap: wrap; min-width: 0; max-width: 100%; }
 .mx-stage-label { min-width: 0; overflow-wrap: anywhere; }
 @media (max-width: 640px) { .mx-badge { white-space: normal; } .mx-stages, .mx-final { width: 100%; } }

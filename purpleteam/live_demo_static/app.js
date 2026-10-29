@@ -13,6 +13,7 @@ let liveRunId = null;
 let liveEvents = [];
 let shownEvents = [];      // the run on screen: its recorded events, to replay the discovery map from
 let runMode = "full";      // static | full | advanced, chosen with the mode switch
+let attackType = "all";
 
 function renderSteps() {
   const bar = $("stepBar");
@@ -188,12 +189,12 @@ $("startBtn").addEventListener("click", async () => {
   $("historyBanner").classList.add("hidden");
   $("infoBanner").classList.add("hidden");
   // Wherever the run is started from: watch discovery build, then come back to the live run for the attacks
-  // (discovery.js returns once the map is complete, unless the reader has gone to another tab meanwhile).
+  // (discovery.js returns once the map is lit up by real traffic, unless the reader has gone to another tab).
   resetView();
   DM.seen = true;  // the map is about to build in front of the user: nothing to replay
   DM.autoReturn = true;
   location.hash = "#/discovery";
-  const response = await fetch(`/run?mode=${encodeURIComponent(runMode)}`, { method: "POST" });
+  const response = await fetch(`/run?mode=${encodeURIComponent(runMode)}&attack_type=${encodeURIComponent(attackType)}`, { method: "POST" });
   if (!response.ok) onError({ detail: (await response.json()).detail || "could not start the run" });
 });
 
@@ -223,6 +224,16 @@ document.querySelectorAll(".mode-switch button").forEach((b) => b.addEventListen
   document.querySelectorAll(".mode-switch button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
   $("modeNote").textContent = b.title;
 }));
+$("attackType").addEventListener("change", (event) => { attackType = event.target.value; });
+fetch("/attack-types").then((response) => response.json()).then((config) => {
+  if (!config.adaptive_enabled) {
+    ["redteam", "crescendo", "pair", "tap"].forEach((value) => {
+      const option = $("attackType").querySelector(`option[value="${value}"]`);
+      option.disabled = true;
+      option.title = "Requires PURPLETEAM_ONLY_STATIC=0 and an attacker-model API key.";
+    });
+  }
+}).catch(() => {});
 $("dmReplayBtn").addEventListener("click", () => dmReplay(viewing === "live" ? liveEvents : shownEvents));
 dmReset();
 renderSteps();
