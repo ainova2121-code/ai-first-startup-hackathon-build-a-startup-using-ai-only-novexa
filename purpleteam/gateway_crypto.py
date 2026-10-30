@@ -145,6 +145,24 @@ def pinned_trust(path: Path | None) -> tuple[dict | None, dict | None]:
     return data.get("checkpoint"), data.get("hardware")
 
 
+def check_unpinned_history(trust_path: Path | None, pinned_checkpoint: dict | None, count: int,
+                           ledger_path: str) -> None:
+    """Refuse a log that holds events but has lost its pin. ``RepinningLedger`` pins a log's first event at once,
+    so a missing pin beside a non-empty log means it was removed -- the one change that would otherwise switch
+    truncation detection off without a sound. Re-pinning an existing log is an explicit, one-time operator call."""
+    if trust_path is None or pinned_checkpoint is not None or count == 0:
+        return
+    if not _bool("GATEWAY_TRUST_REPIN_EXISTING_LOG", False):
+        raise RuntimeError(
+            f"refusing to start: the audit ledger at {ledger_path} already holds {count} event(s) but its pinned "
+            f"trust file {trust_path} is missing — it may have been deleted to hide a truncated or rewritten log. "
+            "Restore the trust file from backup, or set GATEWAY_TRUST_REPIN_EXISTING_LOG=true once (after "
+            "checking the log) to pin it as it is now.")
+    print(f"purpleteam gateway: GATEWAY_TRUST_REPIN_EXISTING_LOG is set — pinning the existing ledger at "
+          f"{ledger_path} as it is now, with no earlier checkpoint to check it against. Unset it after this start.",
+          file=sys.stderr)
+
+
 def save_trust(path: Path | None, trust: dict) -> None:
     """Pin this run's checkpoint for the next restart to check the log against. Only a local,
     restart-to-restart defence — periodic external timestamp anchoring (purpleteam.audit.anchor)
@@ -177,7 +195,9 @@ class RepinningLedger:
 
     Re-pins after ``every`` appends or ``seconds`` of wall time, whichever comes first, so a
     checkpoint — an O(log size) verification over the whole log — is never taken on every single
-    request. Every other attribute (``count``, ``events``, ``verify``, ``export_trust``...)
+    request. The first append to a log with no pin yet is pinned at once, so a log that holds events
+    always has a pin and a missing one can only mean it was removed (``gateway_main`` refuses that).
+    Every other attribute (``count``, ``events``, ``verify``, ``export_trust``...)
     passes straight through to the wrapped ledger."""
 
     def __init__(self, ledger: Any, trust_path: Path, *, every: int = 100, seconds: float = 300.0,
@@ -185,14 +205,15 @@ class RepinningLedger:
         self._ledger, self._trust_path, self._every, self._seconds, self._clock = (
             ledger, trust_path, every, seconds, clock)
         self._since_pin, self._last_pin = 0, clock()
+        self._pinned = trust_path.exists()
 
     def append(self, actor: str, kind: str, payload: dict) -> dict:
         event = self._ledger.append(actor, kind, payload)
         self._since_pin += 1
         now = self._clock()
-        if self._since_pin >= self._every or now - self._last_pin >= self._seconds:
+        if not self._pinned or self._since_pin >= self._every or now - self._last_pin >= self._seconds:
             save_trust(self._trust_path, self._ledger.export_trust())
-            self._since_pin, self._last_pin = 0, now
+            self._since_pin, self._last_pin, self._pinned = 0, now, True
         return event
 
     def __getattr__(self, name: str) -> Any:

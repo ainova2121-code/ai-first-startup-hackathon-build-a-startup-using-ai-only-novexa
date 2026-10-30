@@ -264,10 +264,12 @@ def test_repinning_ledger_pins_after_the_event_count_threshold(tmp_path):
     wrapped = RepinningLedger(ledger, trust_path, every=3, seconds=10_000, clock=_FakeClock())
 
     wrapped.append("attacker", "attack", {"id": 1})
+    assert pinned_trust(trust_path)[0]["size"] == 1  # a log's first event is pinned at once
     wrapped.append("attacker", "attack", {"id": 2})
-    assert not trust_path.exists()  # below the threshold
     wrapped.append("attacker", "attack", {"id": 3})
-    assert trust_path.exists() and pinned_trust(trust_path)[0]["size"] == 3
+    assert pinned_trust(trust_path)[0]["size"] == 1  # below the threshold
+    wrapped.append("attacker", "attack", {"id": 4})
+    assert pinned_trust(trust_path)[0]["size"] == 4
 
 
 def test_repinning_ledger_pins_after_the_time_threshold(tmp_path):
@@ -277,10 +279,11 @@ def test_repinning_ledger_pins_after_the_time_threshold(tmp_path):
     wrapped = RepinningLedger(ledger, trust_path, every=1_000_000, seconds=60, clock=clock)
 
     wrapped.append("attacker", "attack", {"id": 1})
-    assert not trust_path.exists()  # well below the event-count threshold
-    clock.now = 61
     wrapped.append("attacker", "attack", {"id": 2})
-    assert trust_path.exists() and pinned_trust(trust_path)[0]["size"] == 2
+    assert pinned_trust(trust_path)[0]["size"] == 1  # only the first event; well below the count threshold
+    clock.now = 61
+    wrapped.append("attacker", "attack", {"id": 3})
+    assert pinned_trust(trust_path)[0]["size"] == 3
 
 
 def test_repinning_ledger_delegates_every_other_attribute(tmp_path):

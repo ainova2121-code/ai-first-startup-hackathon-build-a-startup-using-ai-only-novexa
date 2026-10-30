@@ -74,6 +74,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Callable
 
 import httpx
 from pydantic import SecretStr
@@ -85,13 +86,15 @@ from purpleteam.defender.policy import LoadedPolicy, load_guard
 from purpleteam.gateway import Provider, create_gateway
 from purpleteam.gateway_bootstrap import bootstrap_keys
 from purpleteam.gateway_containment import LiveContainment
-from purpleteam.gateway_crypto import RepinningLedger, hardware, keyring, pinned_trust, save_trust
+from purpleteam.gateway_crypto import (
+    RepinningLedger, check_unpinned_history, hardware, keyring, pinned_trust, save_trust)
 from purpleteam.gateway_debug import ReasoningDebugLog
 from purpleteam.gateway_keys import FileKeyStore, GatewayKeys
 from purpleteam.gateway_observer import GatewayObserver
 from purpleteam.oversight import ReviewQueue
 
 _PROVIDER_ENV = {"openai": "OPENAI", "anthropic": "ANTHROPIC", "gemini": "GEMINI"}
+KEYS_ACTOR = "gateway_keys"
 
 
 
@@ -200,6 +203,7 @@ def _ledger(redactor) -> AuditLedger | RepinningLedger | None:
             f"refusing to start: the audit ledger at {ledger_path} does not match its pinned "
             f"checkpoint ({error}) — it may have been truncated or rewritten while this gateway "
             "was not running") from error
+    check_unpinned_history(trust_path, pinned_checkpoint, ledger.count(), ledger_path)
     if ledger.count() > 0:  # an empty log has no durable identity yet (see gateway_crypto.save_trust);
         save_trust(trust_path, ledger.export_trust())  # pinning it would just invent a phantom one
     if trust_path is None:
@@ -208,6 +212,14 @@ def _ledger(redactor) -> AuditLedger | RepinningLedger | None:
     # otherwise protect nothing appended during this run by the time of the next restart.
     return RepinningLedger(ledger, trust_path, every=int(os.environ.get("GATEWAY_TRUST_REPIN_EVERY", 100)),
                           seconds=float(os.environ.get("GATEWAY_TRUST_REPIN_SECONDS", 300)))
+
+
+def _key_audit(ledger) -> Callable[[str, dict], None] | None:
+    """Every key issued or revoked and every refused request, signed into the audit ledger under its own actor
+    (``GatewayKeys`` already holds back floods and never passes a secret); None when there is no ledger."""
+    if ledger is None:
+        return None
+    return lambda kind, payload: ledger.append(KEYS_ACTOR, kind, payload)
 
 
 def build_app():
@@ -227,20 +239,6 @@ def build_app():
                 "used through a checkpoint the ledger takes, so 'required' without a ledger, a "
                 "persistent keyring and a pinned trust file would start up having never touched "
                 "hardware signing at all. Configure all three, or drop GATEWAY_HARDWARE_SIGNING=required.")
-    observer = GatewayObserver()
-    keys_file = os.environ.get("GATEWAY_KEYS_FILE")
-    keys = GatewayKeys(store=FileKeyStore(keys_file) if keys_file else None)
-    bootstrap_keys(keys, persisted=bool(keys_file))
-    containment = None
-    if _bool("GATEWAY_LIVE_CONTAINMENT", False):
-        if policy is None or policy.manifest is None:
-            raise RuntimeError(
-                "GATEWAY_LIVE_CONTAINMENT=true needs an active, signed policy that declares a "
-                "manifest (see purpleteam.defender.policy.save_policy) — containment only ever "
-                "narrows what that manifest already allows, so without one there is nothing for it "
-                "to narrow from. Set GATEWAY_ENFORCE=true with a policy that declares a manifest, "
-                "or drop GATEWAY_LIVE_CONTAINMENT.")
-        containment = LiveContainment(policy.manifest, keys)
     secret = os.environ.get("GATEWAY_REDACTOR_SECRET")
     ledger_configured = bool(os.environ.get("GATEWAY_LEDGER_PATH"))
     if not secret:
@@ -255,6 +253,20 @@ def build_app():
              "only keyed commitments instead.", file=sys.stderr)
     redactor = Redactor(secret.encode("utf-8")) if secret else None
     ledger = _ledger(redactor)
+    observer = GatewayObserver()
+    keys_file = os.environ.get("GATEWAY_KEYS_FILE")
+    keys = GatewayKeys(audit=_key_audit(ledger), store=FileKeyStore(keys_file) if keys_file else None)
+    bootstrap_keys(keys, persisted=bool(keys_file))
+    containment = None
+    if _bool("GATEWAY_LIVE_CONTAINMENT", False):
+        if policy is None or policy.manifest is None:
+            raise RuntimeError(
+                "GATEWAY_LIVE_CONTAINMENT=true needs an active, signed policy that declares a "
+                "manifest (see purpleteam.defender.policy.save_policy) — containment only ever "
+                "narrows what that manifest already allows, so without one there is nothing for it "
+                "to narrow from. Set GATEWAY_ENFORCE=true with a policy that declares a manifest, "
+                "or drop GATEWAY_LIVE_CONTAINMENT.")
+        containment = LiveContainment(policy.manifest, keys)
     reasoning_debug_path = os.environ.get("GATEWAY_DEBUG_REASONING_PATH")
     reasoning_debug = None
     if reasoning_debug_path:
