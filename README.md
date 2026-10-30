@@ -25,11 +25,12 @@ system, used to prove the platform against a real, running agent rather than a t
 
 ```bash
 uv sync
-cp .env.example .env    # set HF_TOKEN (or LEDGERPILOT_LLM_API_KEY) and a DEMO_ACCESS_CODE of 12+ characters
+cp .env.example .env    # set HF_TOKEN (or LEDGERPILOT_LLM_API_KEY)
 uv run uvicorn --factory purpleteam.live_demo:app --port 8090
 ```
 
-Open http://localhost:8090 and sign in with `DEMO_ACCESS_CODE` (every route sits behind it). Pick a mode:
+Open http://localhost:8090 and click "Enter the demo" (a passwordless session; every route sits behind it).
+Pick a mode:
 
 - **Static** (seconds): discovery, identity posture, the source scan and prompt rules. No attack runs, so
   it gives no release verdict.

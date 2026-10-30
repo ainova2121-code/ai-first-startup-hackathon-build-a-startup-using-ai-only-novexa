@@ -4,7 +4,7 @@
 **Golden rule:** say what the screen shows, let the proof carry the claim. Don't oversell — the artifacts do the talking.
 
 > Tabs, left to right: **Live run · Discovery · Patched files · Decision drift · Audit ledger**.
-> Before recording: `uv run uvicorn --factory ledgerpilot.main:create_app` on the target, start the console, set mode to **Full**, attack type **Full assessment**, and have the browser already logged in (past the access code). Do a dry run once so the cache is warm and the full run lands in ~3 min.
+> Before recording: `uv run uvicorn --factory ledgerpilot.main:create_app` on the target, start the console, set mode to **Full**, attack type **Full assessment**, and have the browser already signed in (past the "Enter the demo" page). Do a dry run once so the cache is warm and the full run lands in ~3 min.
 
 ---
 

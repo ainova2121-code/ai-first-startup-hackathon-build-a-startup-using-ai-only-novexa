@@ -27,9 +27,6 @@ $UvVersion, $CaddyVersion = "0.12.3", "2.8.4"
 
 if (-not (Test-Path "$AppDir\.env")) { throw "$AppDir\.env is missing: copy your .env next to the project first" }
 if (-not (Get-Tpm).TpmPresent) { throw "this VM has no TPM: recreate it with Security type 'Trusted launch' and vTPM on" }
-if (-not (Select-String -Path "$AppDir\.env" -Pattern "^DEMO_ACCESS_CODE=.{12,}" -Quiet)) {
-    throw ".env needs DEMO_ACCESS_CODE (12+ characters)"
-}
 
 # A pinned release archive, checked against the checksum its release publishes, then unpacked; any mismatch stops.
 function Install-Verified([string]$Url, [string]$SumsUrl, [string]$Algorithm, [string]$Exe, [string]$Dir) {
@@ -85,5 +82,5 @@ foreach ($attempt in 1..60) {
     try { Invoke-WebRequest "http://127.0.0.1:8090/login" -UseBasicParsing -TimeoutSec 5 | Out-Null; break }
     catch { if ($attempt -eq 60) { throw "the demo did not start: see $AppDir\novexa-demo.log" }; Start-Sleep 5 }
 }
-Write-Host "Live at https://$Domain  (the certificate can take a minute on first start; sign in with DEMO_ACCESS_CODE)"
+Write-Host "Live at https://$Domain  (the certificate can take a minute on first start; one click signs in)"
 Write-Host "Check the TPM: run one Full run, then Audit ledger should show 'TPM 2.0 signature verified'."

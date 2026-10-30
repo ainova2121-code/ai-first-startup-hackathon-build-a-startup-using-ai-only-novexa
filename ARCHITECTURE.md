@@ -194,7 +194,7 @@ The TPM/HSM/KMS key adds a signature to checkpoints; it does not attest the host
 
 ```mermaid
 flowchart TD
-  Browser[Browser\nsigned in with the access code]
+  Browser[Browser\npasswordless demo session]
   Console[Live console\nFastAPI + server-sent events]
   Discover[Discovery\nagents, tools, prompts fingerprinted]
   Attack[Every attack against the unpatched agent, in parallel\nrule-written claims, claims in a document or form field,\nPyRIT jailbreak / injection / social-engineering]
@@ -217,7 +217,7 @@ flowchart TD
 
 ## Current boundaries
 
-- The Compose deployment packages the gateway and Caddy. The live console is a single-operator tool behind one access code (`deploy/azure_windows.ps1` hosts it); the multi-user fleet console watches gateways, not assessments.
+- The Compose deployment packages the gateway and Caddy. The live console is a single-operator demo behind a passwordless session (`deploy/azure_windows.ps1` hosts it); the multi-user fleet console watches gateways, not assessments.
 - External HTTP targets use `HttpTarget`; framework-neutral model observation depends on traffic routed through the gateway. The current repository does not include a packaged remote assessment client that automatically coordinates a separately deployed gateway’s `/profile` endpoint with the assessment runner.
 - The current provider dialects are OpenAI-compatible, Anthropic, and Gemini. There is no dedicated RAG/vector-database or MCP security subsystem in this repository.
 - The defender selects prewritten runtime guards. Verified source codemods are applied to the configured target repository (catalog-approved, or model-drafted and auto-approved only when the rescan and the independent invariant both pass, labelled as not human-reviewed); every original is snapshotted and one restore reverts them all.
