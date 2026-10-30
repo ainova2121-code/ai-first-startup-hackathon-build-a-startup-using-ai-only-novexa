@@ -140,28 +140,76 @@
     detail.append(header, grid);
   }
 
+  function resetGrid(head, body, columns) {
+    head.replaceChildren();
+    body.replaceChildren();
+    const headerRow = el("tr");
+    headerRow.append(el("th", "", "#"));
+    for (const column of columns) headerRow.append(el("th", "", column.name));
+    head.append(headerRow);
+  }
+
+  function emptyRow(columns, text) {
+    const empty = el("tr", "db-empty-row");
+    empty.append(el("td", "", text));
+    empty.firstElementChild.colSpan = columns.length + 1;
+    return empty;
+  }
+
+  function valueCell(value, className = "") {
+    const td = el("td", className);
+    if (value?.kind === "binary") {
+      td.append(el("span", "db-binary", `BINARY · ${Number(value.bytes || 0).toLocaleString()} B`));
+      return td;
+    }
+    const text = value === null || value === undefined ? "NULL" : formatValue(value);
+    const cell = el("span", `db-cell${value === null || value === undefined ? " null" : ""}`, text);
+    cell.title = text;
+    td.append(cell);
+    return td;
+  }
+
+  // The untouched seeded state captured before any attack; the seeded preview and a run baseline are that state.
+  function originalOf(data) {
+    if (data.baseline) return data.baseline;
+    return data.snapshot_kind === "seed_preview" || data.snapshot_kind === "run_baseline" ? data : null;
+  }
+
+  function renderOriginal(data, query) {
+    const original = originalOf(data);
+    const table = original?.tables.find((item) => item.name === selectedTable);
+    for (const id of ["dbOriginalCaption", "dbOriginalWrap"]) $(id).classList.toggle("hidden", !table);
+    if (!table) return;
+    $("dbOriginalTitle").textContent = `Original · ${table.label}`;
+    $("dbOriginalDescription").textContent = "before any attack";
+    const rows = table.rows.filter((row) => matchesSearch(row, query));
+    $("dbOriginalCount").textContent = `${rows.length.toLocaleString()} of ${table.row_count.toLocaleString()} records`;
+    const body = $("dbOriginalBody");
+    resetGrid($("dbOriginalHead"), body, table.columns);
+    if (!rows.length) body.append(emptyRow(table.columns, query ? "No records match this search." : "This table had no records."));
+    for (const [index, row] of rows.entries()) {
+      const tr = el("tr");
+      tr.append(el("td", "", row.id ?? index + 1));
+      for (const column of table.columns) tr.append(valueCell(row[column.name]));
+      body.append(tr);
+    }
+  }
+
   function renderTable(data) {
     const table = data.tables.find((item) => item.name === selectedTable) || data.tables[0];
     if (!table) return;
     selectedTable = table.name;
-    $("dbTableTitle").textContent = table.label;
+    renderOriginal(data, $("dbSearch").value.trim().toLowerCase());
+    $("dbTableTitle").textContent = `Current · ${table.label}`;
     $("dbTableDescription").textContent = `${table.columns.length} columns · select a row for full values`;
     const query = $("dbSearch").value.trim().toLowerCase();
     const rows = table.rows.filter((row) => matchesSearch(row, query));
     $("dbRecordCount").textContent = `${rows.length.toLocaleString()} of ${table.row_count.toLocaleString()} records`;
     const head = $("dbTableHead");
     const body = $("dbTableBody");
-    head.replaceChildren();
-    body.replaceChildren();
-    const headerRow = el("tr");
-    headerRow.append(el("th", "", "#"));
-    for (const column of table.columns) headerRow.append(el("th", "", column.name));
-    head.append(headerRow);
+    resetGrid(head, body, table.columns);
     if (!rows.length) {
-      const empty = el("tr", "db-empty-row");
-      empty.append(el("td", "", query ? "No records match this search." : "This table has no records yet."));
-      empty.firstElementChild.colSpan = table.columns.length + 1;
-      body.append(empty);
+      body.append(emptyRow(table.columns, query ? "No records match this search." : "This table has no records yet."));
       renderDetail(table, null, "");
       return;
     }
@@ -175,16 +223,7 @@
       for (const column of table.columns) {
         const value = row[column.name];
         const changed = !isNew && baseRow && !sameValue(value, baseRow[column.name]);  // a value the run altered
-        const td = el("td", changed ? "db-cell-changed" : "");
-        if (value?.kind === "binary") {
-          td.append(el("span", "db-binary", `BINARY · ${Number(value.bytes || 0).toLocaleString()} B`));
-        } else {
-          const text = value === null || value === undefined ? "NULL" : formatValue(value);
-          const cell = el("span", `db-cell${value === null || value === undefined ? " null" : ""}`, text);
-          cell.title = text;
-          td.append(cell);
-        }
-        tr.append(td);
+        tr.append(valueCell(value, changed ? "db-cell-changed" : ""));
       }
       tr.addEventListener("click", () => {
         selectedRowKey = rowKey;
@@ -228,6 +267,7 @@
     $("dbMessage").classList.toggle("error", error);
     $("dbMessage").classList.remove("hidden");
     $("dbTableWrap").classList.add("hidden");
+    for (const id of ["dbOriginalCaption", "dbOriginalWrap"]) $(id).classList.add("hidden");
   }
 
   async function loadDatabase(force = false) {

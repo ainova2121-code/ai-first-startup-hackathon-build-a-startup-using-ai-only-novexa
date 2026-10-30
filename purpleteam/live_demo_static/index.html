@@ -225,6 +225,13 @@
         <div id="dbTableTabs" class="db-table-tabs" role="tablist" aria-label="Database tables"></div>
         <label class="db-search"><span aria-hidden="true">⌕</span><input id="dbSearch" type="search" placeholder="Search records…" aria-label="Search database records"></label>
       </div>
+      <div id="dbOriginalCaption" class="db-table-caption hidden">
+        <div><span id="dbOriginalTitle" class="db-table-title">Original</span><span id="dbOriginalDescription" class="db-table-description"></span></div>
+        <span id="dbOriginalCount" class="db-record-count"></span>
+      </div>
+      <div id="dbOriginalWrap" class="db-table-wrap hidden" tabindex="0" aria-label="Original database rows, before any attack">
+        <table class="db-grid"><thead id="dbOriginalHead"></thead><tbody id="dbOriginalBody"></tbody></table>
+      </div>
       <div class="db-table-caption">
         <div><span id="dbTableTitle" class="db-table-title">Tables</span><span id="dbTableDescription" class="db-table-description"></span></div>
         <span id="dbRecordCount" class="db-record-count"></span>
@@ -320,7 +327,7 @@
 <script src="/static/discovery_panels.js?v=43"></script>
 <script src="/static/feed.js?v=50"></script>
 <script src="/static/expand.js?v=49"></script>
-<script src="/static/database.js?v=3"></script>
+<script src="/static/database.js?v=4"></script>
 <script src="/static/app.js?v=57"></script>
 </body>
 </html>
