@@ -104,5 +104,5 @@ def retest_against(cases: list[RegressionCase], target: Any, oracle: Any) -> tup
         if verdict.breached:
             breaches.append(CorpusResult(case.id, "regression", True, verdict.detail, kind=verdict.kind,
                                         tool=verdict.tool, agent=verdict.agent, evidence=verdict.evidence,
-                                        payload=case.payload))
+                                        payload=case.payload, reached=verdict.reached_tools))
     return breaches, log

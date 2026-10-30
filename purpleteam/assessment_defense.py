@@ -55,7 +55,10 @@ class DefensePass:
         origins = {b.payload: b.id for b in reversed(breaches) if b.payload}  # each payload's first breach
         # Each payload is re-tested against the one breach it caused, so a re-attack that wanders into a
         # different hole is never credited as proof the original was fixed (see verifier.verify ``scopes``).
-        scope_by_payload = {b.payload: (b.kind, b.tool, b.agent) for b in reversed(breaches) if b.payload}
+        # A breach that spread is re-tested against every tool it reached: the canary arriving at any of them again is
+        # the same breach recurring, not a different hole.
+        scope_by_payload = {b.payload: frozenset((b.kind, tool, agent) for agent, tool in b.breached_tools)
+                            or (b.kind, b.tool, b.agent) for b in reversed(breaches) if b.payload}
 
         def attempt(level: int, excluded: frozenset[str], legit_only: bool = False) -> tuple[dict, ProbeLog, set[str]]:
             gaps = self._apply_defense(report, level, source_fix, source_gaps, emit, advisories, excluded,

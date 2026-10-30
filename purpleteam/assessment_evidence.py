@@ -107,6 +107,8 @@ class EvidencePass:
         if r.breached:
             payload = {"id": r.id, "kind": r.kind, "tool": r.tool, "agent": r.agent,
                        "proof": r.detail, "evidence": r.evidence}
+            if len(r.breached_tools) > 1:  # the planted value travelled on: every tool it reached is on the record
+                payload["reached"] = [{"agent": agent, "tool": tool} for agent, tool in r.breached_tools]
             if r.signals:
                 payload["signals"] = [{"scorer": s.scorer, "pattern": s.pattern, "where": s.where}
                                       for s in r.signals]

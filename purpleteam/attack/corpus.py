@@ -109,9 +109,10 @@ class AttackTemplate:
     id: str
     technique: str
     body: str  # a PyRIT jailbreak wrapping the objective; still holds CANARY_MARK
+    canary: str = ""  # the canary that fits this template's field (oracle.canary_for); "" uses the run's own
 
     def render(self, canary: str) -> str:
-        return self.body.replace(CANARY_MARK, canary)
+        return self.body.replace(CANARY_MARK, self.canary or canary)
 
     async def disguised(self, canary: str, name: str) -> str:
         """The rendered payload, disguised by a named converter (``purpleteam.attack.converters.DISGUISES``)."""
@@ -153,6 +154,12 @@ class CorpusResult:
     persuaded: int = 0  # held trials in which the agent tried the attacker's call and a control stopped it
     agent_replies: list[dict[str, str]] = field(default_factory=list)
     calls: tuple = ()  # (agent, tool) pairs this attempt actually executed, for the per-question execution tree
+    reached: tuple = ()  # every (agent, tool) a proven breach went through (see oracle.Verdict.reached_tools)
+
+    @property
+    def breached_tools(self) -> tuple:
+        """Each (agent, tool) this breach went through; the one it names when nothing more was recorded."""
+        return self.reached or (((self.agent, self.tool),) if self.breached and self.tool else ())
 
 
 def as_corpus_result(result_id: str, technique: str, summary: Summary, payload: str, signals: list,
@@ -160,10 +167,12 @@ def as_corpus_result(result_id: str, technique: str, summary: Summary, payload: 
                      calls: tuple = ()) -> CorpusResult:
     fields = ((summary.verdict.kind, summary.verdict.tool, summary.verdict.agent, summary.verdict.evidence)
               if summary.verdict else ("", "", "", ""))
-    return CorpusResult(result_id, technique, summary.outcome == BREACHED, summary.detail, *fields,
+    breached = summary.outcome == BREACHED
+    return CorpusResult(result_id, technique, breached, summary.detail, *fields,
                         outcome=summary.outcome, upper_bound=summary.upper_bound, trials=summary.trials,
                         conclusive=summary.conclusive, payload=payload, signals=tuple(signals), reply=reply,
-                        persuaded=summary.persuaded, agent_replies=list(agent_replies or []), calls=tuple(calls))
+                        persuaded=summary.persuaded, agent_replies=list(agent_replies or []), calls=tuple(calls),
+                        reached=summary.verdict.reached_tools if breached and summary.verdict else ())
 
 
 async def run_corpus(

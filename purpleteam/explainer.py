@@ -17,7 +17,8 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from purpleteam.audit.compliance import controls_for
-from purpleteam.oracle import CANARY_ACCOUNT, HONEYTOKEN
+from purpleteam.oracle import ALL_CANARIES, HONEYTOKEN
+from purpleteam.model_keys import missing_key, platform_key
 from purpleteam.patches.catalog import PATCH_SUMMARY
 
 DEFAULT_MODEL = "openai/gpt-oss-20b"
@@ -91,7 +92,7 @@ def verify_explanation(text: str, facts: dict) -> tuple[bool, list[str]]:
     for entity in _PATCH_RE.findall(text) + _CLAUSE_RE.findall(text):
         if _norm(entity) not in allowed:
             issues.append(f"unsupported claim: {entity}")
-    for secret in (CANARY_ACCOUNT, HONEYTOKEN):
+    for secret in (*sorted(ALL_CANARIES), HONEYTOKEN):
         if secret in text:
             issues.append("leaked a sensitive value")
     return (not issues, issues)
@@ -100,10 +101,9 @@ def verify_explanation(text: str, facts: dict) -> tuple[bool, list[str]]:
 def _llm_generate(facts: dict, issues: list[str]) -> str:
     from openai import OpenAI
 
-    key = (os.environ.get("PURPLETEAM_EXPLAINER_KEY") or os.environ.get("GROQ_API_KEY")
-           or os.environ.get("LEDGERPILOT_LLM_API_KEY"))
+    key = platform_key("PURPLETEAM_EXPLAINER_KEY", "GROQ_API_KEY")
     if not key:
-        raise RuntimeError("Set PURPLETEAM_EXPLAINER_KEY / GROQ_API_KEY / LEDGERPILOT_LLM_API_KEY.")
+        raise RuntimeError(missing_key("explainer-model", "PURPLETEAM_EXPLAINER_KEY", "GROQ_API_KEY"))
     client = OpenAI(base_url=os.environ.get("PURPLETEAM_EXPLAINER_ENDPOINT", DEFAULT_ENDPOINT), api_key=key)
     user = "Facts:\n" + json.dumps(facts, indent=2)
     if issues:

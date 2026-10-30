@@ -178,3 +178,10 @@ def test_a_policy_with_no_signature_fields_is_rejected(tmp_path):
     path.write_text(json.dumps({"policy": {"findings": []}}), encoding="utf-8")
     with pytest.raises(ValueError, match="not signed"):
         load_guard(path, {})
+
+
+def test_operator_redaction_patterns_round_trip_into_the_rebuilt_output_redactor(tmp_path):
+    findings = [Finding("exfiltration", "lookup_vendor", "vendor", "leak")]
+    original, rebuilt, path = _rebuilt(findings, {"redact_patterns": [r"\bMRN-\d{6}\b"]}, tmp_path)
+    assert json.loads(path.read_text())["policy"]["facts"]["redact_patterns"] == [r"\bMRN-\d{6}\b"]
+    assert "MRN-123456" not in rebuilt.screen("vendor", "record MRN-123456", "tool_result")

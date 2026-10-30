@@ -24,7 +24,8 @@ from purpleteam.attack.outcome import BREACHED, HELD, INCONCLUSIVE
 from purpleteam.attack.pyrit_scorer import OracleScorer
 from purpleteam.attack.pyrit_target import PlatformPromptTarget
 from purpleteam.discovery import AgentInfo
-from purpleteam.oracle import CANARY_ACCOUNT, CanaryOracle, Oracle
+from purpleteam.oracle import ALL_CANARIES, CanaryOracle, Oracle
+from purpleteam.model_keys import ATTACKER_KEYS, missing_key, platform_key
 from purpleteam.run_control import RunControl
 
 STRATEGIES = {"redteam": RedTeamingAttack, "crescendo": CrescendoAttack}
@@ -42,8 +43,8 @@ def attacker_system_prompt(agent_info: Iterable[AgentInfo] = ()) -> str:
     """The generic brief above, enriched with the target's own discovered agent instructions when
     discovery captured them (static/runtime capture does; gateway-observed discovery does not --
     this degrades to the plain generic prompt rather than failing). This is how an adversarial
-    model finds a target's own stated trigger condition (e.g. "update the bank account if the
-    invoice states new remittance details") instead of only generic jailbreak escalation -- the
+    model finds a target's own stated trigger condition (e.g. "use the contact address the ticket
+    states, if it gives a new one") instead of only generic jailbreak escalation -- the
     platform never asserts what that condition is for any domain, it only hands the attacker the
     target's own real words to find one in, the same way a human red-teamer reading the prompt
     would. ``agent_info`` is target data (may hold secrets) and is used only as in-memory context
@@ -70,13 +71,9 @@ class CampaignResult:
 
 
 def adversarial_target(model: str | None = None) -> OpenAIChatTarget:
-    key = (os.environ.get("PURPLETEAM_ATTACKER_KEY") or os.environ.get("GROQ_API_KEY")
-           or os.environ.get("LEDGERPILOT_LLM_API_KEY"))
+    key = platform_key(*ATTACKER_KEYS)
     if not key:
-        raise RuntimeError(
-            "No attacker-model key found. Set PURPLETEAM_ATTACKER_KEY (or GROQ_API_KEY / "
-            "LEDGERPILOT_LLM_API_KEY) in the environment or .env."
-        )
+        raise RuntimeError(missing_key("attacker-model", *ATTACKER_KEYS))
     return OpenAIChatTarget(
         model_name=model or os.environ.get("PURPLETEAM_ATTACKER_MODEL", "openai/gpt-oss-20b"),
         endpoint=os.environ.get("PURPLETEAM_ATTACKER_ENDPOINT", "https://api.groq.com/openai/v1"),
@@ -103,7 +100,7 @@ async def run_campaign(
 ) -> CampaignResult:
     await initialize_pyrit_async(IN_MEMORY, silent=True)
     pyrit_target = PlatformPromptTarget(target=target, control=control)
-    oracle = oracle or CanaryOracle(canaries or {CANARY_ACCOUNT}, dangerous_tools)
+    oracle = oracle or CanaryOracle(canaries or ALL_CANARIES, dangerous_tools)
     scorer = OracleScorer(target=pyrit_target, oracle=oracle)
 
     attack = STRATEGIES[strategy](

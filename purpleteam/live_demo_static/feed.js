@@ -69,7 +69,7 @@ function attackGroup(e) {
 const persuaded = (e) => e.outcome === "held" && e.persuaded > 0;
 
 // Per-question agent execution tree: the discovered topology, coloured from this attack's captured calls.
-// Executed agents/tools are green; the tool the canary reached is red; everything else is "available" (grey).
+// Executed agents/tools are green; every tool the canary reached is red; everything else is "available" (grey).
 function xtDot(kind) { return el("span", kind ? `xt-dot ${kind}` : "xt-dot"); }
 function xtLegend(kind, label) { return add(el("span", "xt-key"), xtDot(kind), document.createTextNode(` ${label}`)); }
 const XT_RISK = { read: "R", write: "W", execute: "SQL", external: "EXT" };  // the tool's icon, from its discovered risk
@@ -82,7 +82,8 @@ function executionTree(e) {
   const order = [...new Set(e.calls.map((c) => c.agent))];  // agents that ran, in call order -- the active route
   const agentsOrdered = [...topo.agents].sort(
     (a, b) => (order.indexOf(a.name) + 1 || 99) - (order.indexOf(b.name) + 1 || 99));
-  const canaryKey = (e.breached || persuaded(e)) && e.tool ? `${e.agent}:${e.tool}` : "";
+  const reached = (e.reached || []).length ? e.reached : (e.tool ? [{ agent: e.agent, tool: e.tool }] : []);
+  const canaryKeys = new Set(e.breached || persuaded(e) ? reached.map((r) => `${r.agent}:${r.tool}`) : []);
 
   const xt = el("section", "xt");
   add(xt, add(el("div", "xt-legend"),
@@ -104,7 +105,7 @@ function executionTree(e) {
           el("div", "xt-agent-sub", `${(agent.tools || []).length} tools · ${used ? "EXECUTED" : "not called"}`))));
     const tools = el("div", "xt-tools");
     for (const tool of agent.tools || []) {
-      const key = `${agent.name}:${tool.name}`, canary = key === canaryKey, exec = executed.has(key);
+      const key = `${agent.name}:${tool.name}`, canary = canaryKeys.has(key), exec = executed.has(key);
       const row = add(el("div", canary ? "xt-tool xt-canary" : exec ? "xt-tool xt-exec" : "xt-tool"),
         el("span", "xt-ticon", XT_RISK[tool.risk] || "•"), el("span", "xt-tname", tool.name));
       if (exec || canary) row.appendChild(el("span", "xt-check", "✓"));
@@ -120,6 +121,9 @@ function executionTree(e) {
     const dl = el("dl", "xt-why");
     add(dl, el("dt", null, "Agent"), el("dd", null, e.agent || "—"));
     add(dl, el("dt", null, "Tool"), el("dd", null, e.tool || "—"));
+    if (reached.length > 1) {
+      add(dl, el("dt", null, "Reached"), el("dd", null, reached.map((r) => `${r.agent} · ${r.tool}`).join("  →  ")));
+    }
     add(dl, el("dt", null, "Oracle"), el("dd", null, e.detail || ""));
     add(panels, add(el("div", "xt-panel"),
       el("div", "xt-panel-h", e.breached ? "Why this question breached" : "What the agent was persuaded to try"), dl));

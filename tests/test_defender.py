@@ -147,3 +147,13 @@ def test_select_all_merges_leak_findings_without_duplicating_global_patches():
 def test_a_known_secret_too_short_to_detect_is_rejected_not_silently_ignored():
     with pytest.raises(ValueError):
         Defender(LEAK_PROFILE, {"secrets": {"abc"}}).select(Finding("egress_leak", "send_email"))
+
+
+def test_p9_also_redacts_the_operators_own_value_shapes_and_refuses_a_broken_pattern():
+    facts = {**FACTS, "redact_patterns": [r"\bMRN-\d{6}\b"]}  # e.g. a hospital's medical record numbers
+    built = next(p for p in Defender(LEAK_PROFILE, facts).select(Finding("exfiltration", "query_ledger", "inquiry"))
+                 .guard.patches if p.id == "P9")
+    assert "MRN-123456" not in built.screen("inquiry", "patient MRN-123456 is fine", "tool_result")
+    with pytest.raises(ValueError, match="invalid pattern"):
+        Defender(LEAK_PROFILE, {**FACTS, "redact_patterns": ["(unclosed"]}).select(
+            Finding("exfiltration", "query_ledger", "inquiry"))

@@ -27,7 +27,7 @@ from purpleteam.attack.advanced import (
 )
 from purpleteam.attack.corpus import action_objective, build_corpus
 from purpleteam.audit.ledger import AuditLedger
-from purpleteam.oracle import CANARY_ACCOUNT, CanaryOracle
+from purpleteam.oracle import ALL_CANARIES, CanaryOracle
 from purpleteam.targets.agentdojo import DEFAULT_SUITE, DEFAULT_USER_TASK, AgentDojoTarget, discover_profile
 
 ATTEMPT_TIMEOUT = 300
@@ -58,7 +58,7 @@ async def main() -> None:
          f"{len(profile.retrieval_tools)} flagged as retrieval surfaces (RAG)")
     print(f"           dangerous: {', '.join(sorted(profile.dangerous_tools))}")
 
-    oracle = CanaryOracle({CANARY_ACCOUNT}, profile.dangerous_tools)
+    oracle = CanaryOracle(ALL_CANARIES, profile.dangerous_tools)
     ledger_path = Path(tempfile.mkdtemp(prefix="purpleteam-agentdojo-")) / "audit.jsonl"
     ledger = AuditLedger(ledger_path)
     assessment = Assessment(

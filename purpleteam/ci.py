@@ -8,11 +8,17 @@ safety. Waived attack IDs (accepted risks) are read from a JSON list and never f
 Passing a ``ledger`` (see ``_main``) additionally records every run so the trend across builds
 can be shown (``audit.trend``) — the gate still only runs when CI triggers it; nothing here
 schedules or watches anything on its own.
+
+Any agent system can be gated: ``--target package.module:factory`` (or ``AGENT_SAFETY_TARGET``) names a
+zero-argument function in your own code that returns ``(target, profile)`` — your adapter and its discovered
+profile. Left unset, the gate runs against the bundled LedgerPilot demo.
 """
 
 from __future__ import annotations
 
+import argparse
 import asyncio
+import importlib
 import json
 import sys
 from dataclasses import dataclass, field
@@ -24,6 +30,7 @@ from purpleteam.attack.outcome import INCONCLUSIVE
 from purpleteam.audit.ledger import AuditLedger
 from purpleteam.audit.trend import render as render_trend
 from purpleteam.audit.trend import runs as trend_runs
+from purpleteam.discovery import TargetProfile
 from purpleteam.oracle import Oracle
 
 WAIVERS_FILE = "agent-safety.waivers.json"
@@ -106,20 +113,38 @@ def report(gate: GateResult, ledger: AuditLedger | None = None) -> None:
         print("\n" + render_trend(trend_runs(ledger.events())))
 
 
-def _main() -> None:
+def load_target(spec: str | None) -> tuple[Target, TargetProfile]:
+    """The target to gate: ``package.module:factory`` names a zero-argument function returning ``(target, profile)``;
+    ``None`` or empty is the bundled LedgerPilot demo."""
+    if not spec:
+        from purpleteam.targets.ledgerpilot import LedgerPilotTarget, discover_profile
+        return LedgerPilotTarget(), discover_profile()
+    module, _, attribute = spec.partition(":")
+    if not (module and attribute):
+        raise ValueError("the target must look like package.module:factory")
+    built = getattr(importlib.import_module(module), attribute)()
+    if not (isinstance(built, tuple) and len(built) == 2 and isinstance(built[1], TargetProfile)):
+        raise ValueError(f"{spec} must return (target, profile)")
+    return built
+
+
+def _main(argv: list[str] | None = None) -> None:
     import os
 
     from dotenv import load_dotenv
 
     from purpleteam.attack.corpus import action_objective, build_corpus
-    from purpleteam.oracle import CANARY_ACCOUNT, CanaryOracle
-    from purpleteam.targets.ledgerpilot import LedgerPilotTarget, discover_profile
+    from purpleteam.oracle import ALL_CANARIES, CanaryOracle
 
     load_dotenv()
-    dangerous = discover_profile().dangerous_tools
+    parser = argparse.ArgumentParser(prog="purpleteam.ci", description="Agent-safety gate for CI.")
+    parser.add_argument("--target", default=os.environ.get("AGENT_SAFETY_TARGET"),
+                        help="package.module:factory returning (target, profile); default: the LedgerPilot demo")
+    target, profile = load_target(parser.parse_args(argv).target)
+    dangerous = profile.dangerous_tools
     ledger = AuditLedger(Path(os.environ.get("AGENT_SAFETY_LEDGER", LEDGER_FILE)))
     gate = asyncio.run(run_gate(
-        LedgerPilotTarget(), CanaryOracle({CANARY_ACCOUNT}, dangerous),
+        target, CanaryOracle(ALL_CANARIES, dangerous),
         templates=build_corpus(action_objective(dangerous)), waived=load_waivers(Path(WAIVERS_FILE)),
         ledger=ledger))
     report(gate, ledger)

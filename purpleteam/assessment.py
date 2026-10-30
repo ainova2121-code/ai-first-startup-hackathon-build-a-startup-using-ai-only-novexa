@@ -204,6 +204,7 @@ class Assessment(DefensePass, EvidencePass):
                   "upper_bound": result.upper_bound, "trials": result.trials, "conclusive": result.conclusive,
                   "seconds": seconds, "reply": reply, "reply_redacted": sensitive_reply,
                   "agent_replies": agent_replies, "calls": list(result.calls),
+                  "reached": [{"agent": agent, "tool": tool} for agent, tool in result.breached_tools],
                   "reply_chars": len(result.reply) if sensitive_reply else None,
                   "persuaded": result.persuaded})
             self._record_attack(result)  # ledger order matches real order: attack/breach before any patch it causes
@@ -334,7 +335,8 @@ class Assessment(DefensePass, EvidencePass):
         # Hardening and gate findings (a weak prompt / tool description, a dangerous tool with no approval gate)
         # are patched only for what actually breached this run: gating a tool legitimate work relies on would stop
         # that work, so only proven ones are touched. Code vulns (SQL, etc.) are always fixed.
-        breached_subjects = {s for r in results if r.breached for s in (r.agent, r.tool) if s}
+        breached_subjects = {s for r in results if r.breached
+                             for pair in ((r.agent, r.tool), *r.breached_tools) for s in pair if s}
         scoped = HARDENING_KINDS | {GATE_KIND}
         to_fix = [f for f in static_raw if f.kind not in scoped or f.subject in breached_subjects]
         source_fix = await self._fix_sources(to_fix, _emit)

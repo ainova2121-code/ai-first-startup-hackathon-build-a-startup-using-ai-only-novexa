@@ -146,7 +146,7 @@ class Defender:
         if patch_id == "P8":
             return self._sql_firewall(finding)
         if patch_id == "P9":
-            return OutputRedactor(self._finder(_SECRET_PATTERNS))
+            return OutputRedactor(self._finder(_SECRET_PATTERNS + self._redact_patterns()))
         if patch_id == "P10":
             return EgressGuard(None, self._finder())
         if patch_id == "P11":
@@ -170,6 +170,17 @@ class Defender:
         if not isinstance(declared, PermissionManifest):
             raise ValueError('facts["manifest"] must be a PermissionManifest')
         return declared
+
+    def _redact_patterns(self) -> list[re.Pattern[str]]:
+        """The operator's own value shapes for P9 to redact too (``facts["redact_patterns"]``: regular expressions),
+        beyond the account- and honeytoken-shaped defaults. One that does not compile is refused, never dropped."""
+        patterns = self._facts.get("redact_patterns", ())
+        if not (isinstance(patterns, (list, tuple)) and all(isinstance(p, str) and p for p in patterns)):
+            raise ValueError('facts["redact_patterns"] must be a list of regular expressions')
+        try:
+            return [re.compile(pattern) for pattern in patterns]
+        except re.error as error:
+            raise ValueError(f'facts["redact_patterns"] holds an invalid pattern: {error}') from error
 
     def _finder(self, extra_patterns: list[re.Pattern[str]] | tuple = ()) -> SecretFinder:
         """Known secrets come from the caller's facts (``facts["secrets"]``); formats are always on."""
@@ -201,15 +212,20 @@ def findings_from_breaches(breaches: list[CorpusResult]) -> list[Finding]:
     signals: dict[tuple, dict] = {}
     evidence: dict[tuple, str] = {}
     for r in breaches:
-        key = (r.kind, r.tool, r.agent)
-        pool = signals.setdefault(key, {})
-        for s in r.signals:
-            pool[(s.scorer, s.pattern, s.where)] = s
-        if _EVIDENCE_STRENGTH.get(r.evidence, 0) >= _EVIDENCE_STRENGTH.get(evidence.get(key, ""), 0):
-            evidence[key] = r.evidence
+        for key in _keys(r):
+            pool = signals.setdefault(key, {})
+            for s in r.signals:
+                pool[(s.scorer, s.pattern, s.where)] = s
+            if _EVIDENCE_STRENGTH.get(r.evidence, 0) >= _EVIDENCE_STRENGTH.get(evidence.get(key, ""), 0):
+                evidence[key] = r.evidence
     unique: dict[tuple, Finding] = {}
     for r in breaches:
-        key = (r.kind, r.tool, r.agent)
-        unique.setdefault(key, Finding(r.kind, r.tool, r.agent, r.detail, tuple(signals[key].values()),
-                                       evidence=evidence[key]))
+        for key in _keys(r):
+            unique.setdefault(key, Finding(*key, r.detail, tuple(signals[key].values()), evidence=evidence[key]))
     return list(unique.values())
+
+
+def _keys(r: CorpusResult) -> list[tuple[str, str, str]]:
+    """(kind, tool, agent) for every tool one breach went through: a planted value that travels on through a
+    multi-agent pipeline is a breach at each dangerous tool it reaches, each needing its own defense."""
+    return [(r.kind, tool, agent) for agent, tool in r.breached_tools] or [(r.kind, r.tool, r.agent)]

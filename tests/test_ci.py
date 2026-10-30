@@ -78,3 +78,25 @@ def test_report_without_a_ledger_omits_the_trend_section():
     with redirect_stdout(out):
         report(evaluate([_result("dan_1", False)], waived=set()))
     assert "Compliance trend" not in out.getvalue()
+
+
+def build_gate_target():
+    """A customer's own factory, as ``--target test_ci:build_gate_target`` would name it."""
+    return _Agent(), PROFILE
+
+
+def not_a_gate_target():
+    return "not (target, profile)"
+
+
+def test_the_gate_takes_any_target_through_a_factory_in_the_customers_own_code():
+    import pytest
+
+    from purpleteam.ci import load_target
+    target, profile = load_target("test_ci:build_gate_target")
+    assert isinstance(target, _Agent) and profile is PROFILE
+    for bad in ("no-colon", ":factory", "test_ci:"):
+        with pytest.raises(ValueError, match="package.module:factory"):
+            load_target(bad)
+    with pytest.raises(ValueError, match="must return"):
+        load_target("test_ci:not_a_gate_target")  # a factory returning anything else is refused, not used

@@ -33,7 +33,7 @@ from purpleteam.audit.ledger import AuditLedger
 from purpleteam.codemods.author import groq_complete
 from purpleteam.codemods.catalog import CodemodCatalog
 from purpleteam.codemods.restore import SourceSnapshots
-from purpleteam.oracle import CANARY_ACCOUNT, HONEYTOKEN, AnyOracle, CanaryOracle, LeakOracle, LoopOracle, not_hijacked
+from purpleteam.oracle import ALL_CANARIES, HONEYTOKEN, AnyOracle, CanaryOracle, LeakOracle, LoopOracle, not_hijacked
 from purpleteam.run_history import RunStore
 from purpleteam.sast import BanditScanner
 from purpleteam.targets.entry import find_entries
@@ -126,7 +126,7 @@ async def assess(argv: list[str] | None = None) -> int:
     run = runs.new()
     run.write_meta(target=profile.name)
     approved = runs.last_approved(profile.name)
-    oracle = AnyOracle(CanaryOracle({CANARY_ACCOUNT}, profile.dangerous_tools), LeakOracle({HONEYTOKEN}),
+    oracle = AnyOracle(CanaryOracle(ALL_CANARIES, profile.dangerous_tools), LeakOracle({HONEYTOKEN}),
                        LoopOracle(profile.dangerous_tools))
     assessment = Assessment(
         target, oracle, profile, AuditLedger(run.ledger_path), legit=[(text, not_hijacked) for text in args.legit],

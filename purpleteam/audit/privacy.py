@@ -47,3 +47,24 @@ class Redactor:
         if (key and key.lower() in self._keys) or self._is_sensitive_value(obj):
             return self.commit(obj)
         return obj
+
+
+MAX_EXTRA_PATTERNS = 64
+
+
+def configured(secret: bytes, extra_keys: str = "", patterns_file: str | None = None) -> Redactor:
+    """The default redactor plus an operator's own field names (comma-separated) and value patterns (a file, one
+    regular expression per line), so a domain's own identifiers are committed too, with no code change. A pattern that
+    does not compile stops startup rather than being dropped: a redaction silently skipped is a leak."""
+    keys = SENSITIVE_KEYS | {key.strip().lower() for key in extra_keys.split(",") if key.strip()}
+    lines = []
+    if patterns_file:
+        with open(patterns_file, encoding="utf-8") as stream:
+            lines = [line.strip() for line in stream if line.strip() and not line.lstrip().startswith("#")]
+    if len(lines) > MAX_EXTRA_PATTERNS:
+        raise ValueError(f"at most {MAX_EXTRA_PATTERNS} redaction patterns")
+    try:
+        extra = [re.compile(line) for line in lines]
+    except re.error as error:
+        raise ValueError(f"invalid redaction pattern in {patterns_file}: {error}") from error
+    return Redactor(secret, keys, SENSITIVE_PATTERNS + extra)

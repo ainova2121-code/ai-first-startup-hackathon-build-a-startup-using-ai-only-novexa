@@ -50,6 +50,7 @@ class Replay:
 
 
 OnAttackStart = Callable[[str, str], None]  # (result_id, payload)
+Scope = tuple[str, str, str] | frozenset[tuple[str, str, str]]  # the original breach: (kind, tool, agent), or each one
 OnAttackResult = Callable[[Replay], None]
 
 
@@ -79,7 +80,7 @@ def verify(
     on_attack_result: OnAttackResult | None = None,
     factory: Callable[[], Target] | None = None,
     legit_factory: Callable[[], Target] | None = None,
-    scopes: list[tuple[str, str, str]] | None = None,
+    scopes: list[Scope | None] | None = None,
 ) -> VerifyReport:
     """Each breaching payload is re-sent ``trials`` times; one held trial out of one still allows a
     ~79% breach rate, so a patch is only as proven as the bound its replays leave. With
@@ -93,8 +94,9 @@ def verify(
     on ``target``, which cannot safely be driven from two threads at once. ``legit_factory`` (default:
     ``factory``) builds the copies the legit checks run on, so a caller can tell the two kinds apart.
 
-    ``scopes`` (one ``(kind, tool, agent)`` per attack) re-tests each payload against its *own* original
-    breach: a trial is "held" unless that same breach recurs. A re-attack that wanders into a different
+    ``scopes`` (one ``(kind, tool, agent)`` per attack, or a set of them for a breach that spread through several
+    tools) re-tests each payload against its *own* original breach: a trial is "held" unless that same breach
+    recurs at any tool it reached. A re-attack that wanders into a different
     hole does not prove the original held, so it is reported separately and still fails ``safe_to_ship``;
     it is never credited as verification of the original. Without ``scopes`` any breach counts, as before."""
     failures: list[str] = []
@@ -119,7 +121,7 @@ def verify(
                 reply = reply or f"error: {error}"
                 continue
             verdict = oracle.judge(observation)
-            if verdict.breached and (scope is None or (verdict.kind, verdict.tool, verdict.agent) == scope):
+            if verdict.breached and _recurs(verdict, scope):
                 breached += 1  # the original breach recurred
                 if not proof:  # show the first breaching trial: that is the one that matters
                     proof, reply = verdict.detail, observation.reply
@@ -175,6 +177,15 @@ def verify(
 
     return VerifyReport(attack_blocked, legit_passed, failures, errored=bool(errors), errors=errors,
                         residual=residual)
+
+
+def _recurs(verdict, scope: Scope | None) -> bool:
+    """Whether a breaching verdict is the original breach again: it reaches a (kind, tool, agent) the original did."""
+    if scope is None:
+        return True
+    original = scope if isinstance(scope, frozenset) else frozenset({scope})
+    reached = getattr(verdict, "reached_tools", ()) or ((verdict.agent, verdict.tool),)
+    return any((verdict.kind, tool, agent) in original for agent, tool in reached)
 
 
 def _send(make: Callable[[], Target], request: str) -> tuple[Observation | None, str, float]:

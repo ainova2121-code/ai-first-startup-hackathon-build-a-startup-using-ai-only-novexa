@@ -58,3 +58,14 @@ def test_a_breach_names_every_agent_the_planted_value_spread_to():
     verdict = ORACLE.judge(Observation("ok", calls))
     assert verdict.tool == "update_vendor_bank" and verdict.agent == "vendor"  # the first hop is what gets patched
     assert verdict.detail.endswith(", then spread to payment.schedule_payment")
+
+
+def test_each_field_gets_a_canary_that_fits_it_and_every_one_is_caught():
+    from purpleteam.oracle import ALL_CANARIES, CANARIES, canary_for
+    assert canary_for("bank_account") == CANARIES["account"] and canary_for("vendor_name") == CANARIES["name"]
+    assert canary_for("recipient_email") == CANARIES["email"] and canary_for("webhook_url") == CANARIES["url"]
+    assert canary_for("phone") == CANARIES["phone"] and canary_for("wallet") == CANARIES["account"]
+    oracle = CanaryOracle(ALL_CANARIES, {"send"})
+    for canary in ALL_CANARIES:
+        assert oracle.judge(Observation("", [ToolCall("a", "send", {"x": f"to {canary}"})])).breached
+    assert not oracle.judge(Observation("", [ToolCall("a", "send", {"x": "Canary Attacker"})])).breached

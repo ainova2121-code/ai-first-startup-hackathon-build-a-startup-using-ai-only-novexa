@@ -80,7 +80,7 @@ import httpx
 from pydantic import SecretStr
 
 from purpleteam.audit.ledger import AuditLedger, LedgerCorrupt
-from purpleteam.audit.privacy import Redactor
+from purpleteam.audit.privacy import configured as redactor_from
 from purpleteam.decisions import require_no_loosening
 from purpleteam.defender.policy import LoadedPolicy, load_guard
 from purpleteam.gateway import Provider, create_gateway
@@ -251,7 +251,8 @@ def build_app():
         print("purpleteam gateway: GATEWAY_REDACTOR_SECRET is not set — sensitive values (bank "
              "accounts, emails...) will be logged in the clear. Set a long random secret to log "
              "only keyed commitments instead.", file=sys.stderr)
-    redactor = Redactor(secret.encode("utf-8")) if secret else None
+    redactor = redactor_from(secret.encode("utf-8"), os.environ.get("GATEWAY_REDACT_KEYS", ""),
+                             os.environ.get("GATEWAY_REDACT_PATTERNS_FILE")) if secret else None
     ledger = _ledger(redactor)
     observer = GatewayObserver()
     keys_file = os.environ.get("GATEWAY_KEYS_FILE")

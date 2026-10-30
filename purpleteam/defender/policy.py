@@ -37,7 +37,7 @@ from purpleteam.patches.catalog import catalog_digest
 
 POLICY_CONTEXT = b"purpleteam.defender.policy.v1"
 POLICY_ACTOR = "defender"
-_FACT_FIELDS = ("secrets", "tables", "verified_values", "verified_arg", "mode")
+_FACT_FIELDS = ("secrets", "tables", "verified_values", "verified_arg", "mode", "redact_patterns")
 
 
 @dataclass(frozen=True)

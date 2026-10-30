@@ -16,6 +16,7 @@ from typing import Awaitable, Callable
 import httpx
 
 from purpleteam.codemods.base import CodemodCandidate
+from purpleteam.model_keys import missing_key, platform_key
 from purpleteam.sast import StaticFinding
 
 Complete = Callable[[str, str], Awaitable[str]]  # (system prompt, user content) -> raw reply text
@@ -68,10 +69,9 @@ def author_endpoint() -> tuple[str, str, str]:
     a small model struggling with strict JSON mode is a known failure mode here (see attack.adaptive)."""
     base = os.environ.get("CODEMOD_AUTHOR_URL", "https://api.groq.com/openai/v1")
     model = os.environ.get("CODEMOD_AUTHOR_MODEL", "openai/gpt-oss-120b")
-    key = os.environ.get("CODEMOD_AUTHOR_KEY") or os.environ.get("LEDGERPILOT_LLM_API_KEY")
+    key = platform_key("CODEMOD_AUTHOR_KEY")
     if not key:
-        raise RuntimeError("No codemod-author model key found. Set CODEMOD_AUTHOR_KEY (or "
-                           "LEDGERPILOT_LLM_API_KEY) in the environment.")
+        raise RuntimeError(missing_key("codemod-author model", "CODEMOD_AUTHOR_KEY"))
     return base, model, key
 
 

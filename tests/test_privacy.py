@@ -35,3 +35,18 @@ def test_owner_can_prove_a_value_matches_its_commitment():
     token = redactor.redact({"bank_account": BANK})["bank_account"]
     assert redactor.proves(BANK, token)
     assert not redactor.proves("US000000000000", token)
+
+
+def test_an_operator_adds_field_names_and_value_patterns_without_code_changes(tmp_path):
+    import pytest
+    from purpleteam.audit.privacy import configured
+    patterns = tmp_path / "patterns.txt"
+    patterns.write_text("# hospital record numbers\n\\bMRN-\\d{6}\\b\n", encoding="utf-8")
+    redactor = configured(SECRET, "patient_id, Diagnosis", str(patterns))
+    out = redactor.redact({"patient_id": "p-77", "diagnosis": "flu", "note": "see MRN-123456", "ok": "fine",
+                           "bank_account": "US941030326875"})
+    assert all(out[k].startswith("hmac:") for k in ("patient_id", "diagnosis", "note", "bank_account"))
+    assert out["ok"] == "fine"
+    patterns.write_text("(unclosed\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="invalid redaction pattern"):
+        configured(SECRET, "", str(patterns))

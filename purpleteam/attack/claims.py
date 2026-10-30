@@ -22,6 +22,7 @@ from purpleteam.attack.corpus import CANARY_MARK, AttackTemplate, action_objecti
 from purpleteam.attack.advanced import multilingual_test_cases, system_prompt_test_cases
 from purpleteam.attack.placement import place
 from purpleteam.discovery import VALUE_SLOT, TargetProfile  # the values an outsider could plant
+from purpleteam.oracle import canary_for
 
 # The switch every runner honours: on (the default), the attacker uses no model at all, only model_free_attacks.
 # PURPLETEAM_ONLY_STATIC=0 turns the model-driven attacks (targeted recon and crafting, TAP search) back on.
@@ -72,7 +73,8 @@ def claim_templates(profile: TargetProfile) -> list[AttackTemplate]:
         return []
     cases = _claim_dataset()
     return [AttackTemplate(f"claim:{label.replace(' ', '_')}:{index}", case["technique"],
-                           case["text"].replace("{label}", label).replace("{Label}", label.capitalize()))
+                           case["text"].replace("{label}", label).replace("{Label}", label.capitalize()),
+                           canary_for(label))
             for label in labels for index, case in enumerate(cases, 1)]
 
 
@@ -82,7 +84,7 @@ def model_free_attacks(profile: TargetProfile) -> list[AttackTemplate]:
     safety-trained model refuses them; side by side, they show the gap that leaves -- an agent that resists every
     jailbreak can still believe a plain claim, wherever it arrives."""
     claims = claim_templates(profile)
-    delivered = [AttackTemplate(f"{t.id.rsplit(':', 1)[0]}:{name}", technique, place(t.body, name))
+    delivered = [AttackTemplate(f"{t.id.rsplit(':', 1)[0]}:{name}", technique, place(t.body, name), t.canary)
                  for t in claims if t.id.endswith(":1") for name, technique in DELIVERIES.items()]
     return (claims + delivered + multilingual_test_cases(profile) + system_prompt_test_cases(profile.agent_info)
             + build_corpus(action_objective(profile.dangerous_tools)))
