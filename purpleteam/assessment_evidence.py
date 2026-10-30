@@ -44,16 +44,21 @@ class EvidencePass:
                 "gaps": gaps})
 
     async def _fix_sources(self, static: list[StaticFinding], emit: Callable[[dict], None]) -> SourceFixResult:
-        """Edit the target's real files for what the scan found (``purpleteam.source_fix``), then
-        reload it so everything after this -- the replay and the legit checks -- runs the edited code.
-        A dynamic attack finding alone never reaches here: it is answered by a runtime guard."""
+        """Edit the target's real files for what the scan found (``purpleteam.source_fix``), then reload it
+        once -- here, after the patch is written and before any defense is applied or re-attack runs -- so
+        everything after (the replay and the legit checks) imports the edited bytes and a stale import is
+        never counted as source verification. A dynamic attack finding alone never reaches here: it is
+        answered by a runtime guard."""
         if not static or self._codemod_catalog is None or self._repo is None or self._scanner is None:
             return SourceFixResult()
         result = await fix_sources(static, self._repo, self._scanner, self._codemod_catalog,
                                    complete=self._codemod_complete, snapshots=self._snapshots,
                                    ledger=self._ledger, emit=emit)
         if result.changes and self._reload_target is not None:
-            self._reload_target()
+            try:
+                self._reload_target()
+            except Exception as exc:
+                raise RuntimeError("target source reload failed; refusing to treat reverification as proof") from exc
             emit({"type": "target_reloaded", "files": sorted({change["path"] for change in result.changes})})
         return result
 

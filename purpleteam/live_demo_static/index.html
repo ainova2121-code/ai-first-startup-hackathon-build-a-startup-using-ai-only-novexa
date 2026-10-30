@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/app.css?v=47">
+<link rel="stylesheet" href="/static/app.css?v=49">
 <link rel="stylesheet" href="/static/ledger.css?v=43">
 <link rel="stylesheet" href="/static/discovery.css?v=44">
 <link rel="stylesheet" href="/static/database.css?v=2">
@@ -122,7 +122,9 @@
       <option value="redteam">PyRIT Red Team</option>
     </select>
     <select id="attackerModel" class="picker hidden" aria-label="Attacker model"></select>
-    <label class="quick-scan" title="Seconds · inspection only: discovery, posture, source scan, prompt rules, catalog fixes. No attacks, no release verdict.">
+    <!-- The static inspection (posture, source scan, prompt rules, catalog fixes) runs automatically during
+         discovery on every run, so the manual toggle is hidden. The backend ``static`` mode is kept for API use. -->
+    <label class="quick-scan hidden" title="Seconds · inspection only: discovery, posture, source scan, prompt rules, catalog fixes. No attacks, no release verdict.">
       <input type="checkbox" id="quickScan"> Quick scan (no attacks)
     </label>
     <button id="startBtn" class="btn primary">Start run</button>
@@ -130,6 +132,7 @@
     <button id="resumeBtn" class="btn" type="button" disabled title="Continue a paused run">Resume</button>
     <button id="stopBtn" class="btn danger" type="button" disabled title="Stop this run; its partial evidence is kept and cannot be resumed">Stop</button>
   </div>
+  <button id="logoutBtn" class="btn logout" type="button" title="Restore every patched file to its original state and end this demo session">Log out</button>
 </header>
 
 <main>
@@ -318,6 +321,6 @@
 <script src="/static/feed.js?v=50"></script>
 <script src="/static/expand.js?v=49"></script>
 <script src="/static/database.js?v=3"></script>
-<script src="/static/app.js?v=56"></script>
+<script src="/static/app.js?v=57"></script>
 </body>
 </html>

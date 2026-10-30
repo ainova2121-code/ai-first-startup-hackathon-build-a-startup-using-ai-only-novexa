@@ -60,15 +60,9 @@ class DefensePass:
         def attempt(level: int, excluded: frozenset[str], legit_only: bool = False) -> tuple[dict, ProbeLog, set[str]]:
             gaps = self._apply_defense(report, level, source_fix, source_gaps, emit, advisories, excluded,
                                        announce=not legit_only)  # a legit-only probe is not a verdict pass
-            if source_fix.changes and self._reload_target is not None:
-                # A source patch is not verified until fresh targets import the edited bytes. Emit
-                # this after patch_applied and before _replay so the live UI can show the real diff
-                # while reverification runs. Never count a stale-import replay as source verification.
-                try:
-                    self._reload_target()
-                except Exception as exc:
-                    raise RuntimeError("target source reload failed; refusing to treat reverification as proof") from exc
-                emit({"type": "target_reloaded", "files": [change["path"] for change in source_fix.changes]})
+            # The edited bytes were already loaded once by _fix_sources, before any defense or replay ran, so
+            # every target this re-attack builds imports them. No reload here: a stale-import replay can never
+            # be counted as source verification because the original bytes are no longer importable.
             attacks = [] if legit_only else [(origins.get(p, ""), p) for p in payloads]
             scopes = None if legit_only else [scope_by_payload.get(p) for p in payloads]
             probes = self._replay(report, attacks, emit, scopes=scopes, control=control)

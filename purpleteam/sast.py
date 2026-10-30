@@ -67,6 +67,7 @@ class StaticFinding:
     line: int
     detail: str
     severity: str = "medium"
+    subject: str = ""  # the agent or tool a finding is about, so a fix can be scoped to what actually breached
 
     @property
     def blocking(self) -> bool:

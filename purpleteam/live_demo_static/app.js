@@ -75,6 +75,7 @@ function setRunning(value) {
   else if (runState === "idle") runState = "running";
   $("startBtn").disabled = value;
   $("restoreBtn").disabled = value;
+  $("logoutBtn").disabled = value;
   updateRunControls();
 }
 
@@ -296,6 +297,21 @@ $("restoreBtn").addEventListener("click", async () => {
   const lines = body.results.map((r) => `${r.path}: ${r.status}${r.reason ? ` (${r.reason})` : ""}`);
   banner.textContent = lines.length ? `Restored — ${lines.join(" · ")}` : "Nothing to restore: no file is modified by the platform.";
   refreshModified();
+});
+
+$("logoutBtn").addEventListener("click", async () => {
+  if (running || !confirm("Restore every patched file to its original state and log out of the demo?")) return;
+  try {
+    const response = await fetch("/logout", { method: "POST" });
+    if (!response.ok) {
+      const body = await response.json().catch(() => ({}));
+      const banner = $("infoBanner");
+      banner.classList.remove("hidden");
+      banner.textContent = body.detail || "log out refused";
+      return;
+    }
+  } catch { /* even if the request fails, send the visitor back to the login page */ }
+  window.location.href = "/login";
 });
 
 $("startBtn").addEventListener("click", async () => {

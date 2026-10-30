@@ -222,9 +222,23 @@ def no_hardcoded_secret(source: str) -> str | None:
     return None
 
 
+def prompt_is_hardened(source: str) -> str | None:
+    """None if some string literal in the snippet carries the injection-hardening marker; else a message.
+    The independent check for the prompt / tool-description hardening codemods (``codemods.hardening``)."""
+    from purpleteam.hardening_scan import MARKER_TAG  # lazy: this low-level module stays import-cycle free
+    tree = _parse(source)
+    if isinstance(tree, str):
+        return tree
+    for node in ast.walk(tree):
+        if _is_string(node) and MARKER_TAG in _literal_text(node):
+            return None
+    return "the injection-hardening clause is not present in the text"
+
+
 # finding kind -> an independent checker; a kind absent here has no independent invariant yet.
 INVARIANTS = {"sql_injection": no_dynamic_sql, "shell_injection": no_shell_injection,
               "hardcoded_secret": no_hardcoded_secret, "code_execution": no_code_execution,
               "insecure_deserialization": no_unsafe_deserialization,
               "tls_verification_disabled": tls_verification_on, "weak_hash": no_weak_hash,
-              "request_without_timeout": requests_have_timeout}
+              "request_without_timeout": requests_have_timeout,
+              "unhardened_prompt": prompt_is_hardened, "unhardened_tool": prompt_is_hardened}

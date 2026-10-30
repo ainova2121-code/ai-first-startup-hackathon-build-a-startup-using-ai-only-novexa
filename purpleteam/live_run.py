@@ -37,10 +37,20 @@ from purpleteam.oracle import CANARY_ACCOUNT, HONEYTOKEN, AnyOracle, CanaryOracl
 from purpleteam.quick import static_run
 from purpleteam.run_history import Run, RunStore
 from purpleteam.run_control import RunControl
+from purpleteam.hardening_scan import CompositeScanner, PromptHardeningScanner
 from purpleteam.sast import BanditScanner
 from purpleteam.targets.ledgerpilot import LedgerPilotTarget, credentials, discover_profile, reload_source
 
 MODES = ("static", "full", "advanced")
+
+
+def _attack_scanner(profile):
+    """Bandit for code vulnerabilities, plus prompt / tool-description hardening driven by what discovery
+    captured. Only used on an attack run, where a hardening fix is scoped to the agents that actually breached."""
+    prompts = {agent.name: agent.prompt for agent in profile.agent_info}
+    dangerous = profile.dangerous_tools
+    tools = {tool.name: tool.description for tool in profile.tools if tool.name in dangerous and tool.description}
+    return CompositeScanner([BanditScanner(), PromptHardeningScanner(prompts, tools)])
 # "all" = the custom-dataset suite (model-free). "full" = that suite PLUS context-aware + adaptive attacks.
 # The four PyRIT strategies and "full" need an attacker model; the rest run with no model at all.
 ATTACK_TYPES = ("all", "full", "corpus", "obfuscation", "redteam", "crescendo", "pair", "tap")
@@ -211,7 +221,7 @@ async def assess(run: Run, runs: RunStore | None, snapshots: SourceSnapshots, pu
         assessment = Assessment(
             make_target,
             oracle, profile, ledger, legit=[(LEGIT_INVOICE, not_hijacked)], credentials=creds, blast={},
-            explainer=None if ONLY_STATIC else explain, scanner=BanditScanner(), repo=TARGET_REPO, anchorer=anchorer,
+            explainer=None if ONLY_STATIC else explain, scanner=_attack_scanner(profile), repo=TARGET_REPO, anchorer=anchorer,
             codemod_catalog=catalog, codemod_complete=groq_complete, source_snapshots=snapshots,
             reload_target=reload_source,
             decision_baseline={**approved.read_json("decisions"), "run": approved.id} if approved else None,

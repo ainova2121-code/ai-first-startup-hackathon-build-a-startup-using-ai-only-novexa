@@ -29,6 +29,7 @@ from purpleteam.codemods.author import Complete
 from purpleteam.codemods.catalog import CodemodCatalog
 from purpleteam.codemods.restore import SourceSnapshots
 from purpleteam.decisions import check_baseline as check_decisions
+from purpleteam.hardening_scan import HARDENING_KINDS
 from purpleteam.sast import Scanner
 from purpleteam.source_fix import display
 from purpleteam.defender.selector import Defense, Finding
@@ -326,7 +327,11 @@ class Assessment(DefensePass, EvidencePass):
                                 for f in static_raw]})
         if control is not None and control.stop_requested:
             return _finish_stopped(results, scope, report, identity_checked=True)
-        source_fix = await self._fix_sources(static_raw, _emit)
+        # Hardening findings (a weak prompt / tool description) are patched only for what actually breached
+        # this run -- the operator asked for the proven ones first. Code vulns (SQL, etc.) are always fixed.
+        breached_subjects = {s for r in results if r.breached for s in (r.agent, r.tool) if s}
+        to_fix = [f for f in static_raw if f.kind not in HARDENING_KINDS or f.subject in breached_subjects]
+        source_fix = await self._fix_sources(to_fix, _emit)
         if control is not None and control.stop_requested:
             return _finish_stopped(results, scope, report, identity_checked=True)
         static = [f.as_finding() for f in static_raw]

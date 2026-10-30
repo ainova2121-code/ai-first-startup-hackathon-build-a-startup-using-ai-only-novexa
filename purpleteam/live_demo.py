@@ -6,8 +6,8 @@ line; this reuses its exact construction, never a parallel implementation.
     uv run uvicorn --factory purpleteam.live_demo:app --port 8090
 
 Needs a configured target model, same as ``purpleteam.demo``: set LEDGERPILOT_LLM_API_KEY or
-HF_TOKEN (see .env.example), and an access code in DEMO_ACCESS_CODE: run/control routes sit behind login
-(``purpleteam.demo_auth``); the synthetic corpus JSON is public for sharing. Run evidence is stored as files. The
+HF_TOKEN (see .env.example). Routes sit behind a passwordless demo login (``purpleteam.demo_auth``); "Log out"
+ends the session and restores the target. The synthetic corpus JSON is public for sharing. Run evidence is stored as files. The
 LedgerPilot target uses an isolated temporary SQLite database, exposed read-only on the Database page; it is separate
 from the multi-tenant console's SQLite store.
 
@@ -30,14 +30,13 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import SecretStr
 
 from ledgerpilot.utils.config import Settings
 from purpleteam.codemods.restore import SourceSnapshots
 from purpleteam.console.events import Broadcaster
-from purpleteam.demo_auth import install_login
+from purpleteam.demo_auth import COOKIE, install_login
 from purpleteam.drift_api import drift_routes
 from purpleteam.live_run import (  # noqa: F401
     ATTACK_TYPES, ATTACKER_MODELS, MODEL_ATTACK_TYPES, MODES, ONLY_STATIC, OPERATOR_DIR, TARGET_REPO,
@@ -87,7 +86,7 @@ class _RunState:
 
 
 def create_app(snapshots: SourceSnapshots | None = None, target_repo: Path = TARGET_REPO,
-               runs: RunStore | None = None, access_code: SecretStr | None = None) -> FastAPI:
+               runs: RunStore | None = None, login: bool = False) -> FastAPI:
     state = _RunState()
     snapshots = snapshots or SourceSnapshots(OPERATOR_DIR / "source_snapshots.json")
     runs = runs or RunStore(OPERATOR_DIR / "runs")
@@ -95,8 +94,8 @@ def create_app(snapshots: SourceSnapshots | None = None, target_repo: Path = TAR
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     app.state.run = state
     state.runs = runs
-    if access_code is not None:
-        install_login(app, access_code)
+    if login:
+        install_login(app)
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     app.include_router(drift_routes(runs))
 
@@ -317,6 +316,18 @@ def create_app(snapshots: SourceSnapshots | None = None, target_repo: Path = TAR
         return {"results": [{**r, "path": f"{target_repo.name}/{r['path']}"} for r in results],
                 "modified": [f"{target_repo.name}/{path}" for path in snapshots.modified()]}
 
+    @app.post("/logout")
+    def logout() -> Response:
+        """End the demo session and put every file the platform edited back to its original bytes, so the
+        next visitor starts from the clean target. Refused while a run is editing its files."""
+        if state.running:
+            raise HTTPException(409, "a run is in progress; log out once it finishes")
+        results = snapshots.restore_all(target_repo)
+        reload_source()
+        response = JSONResponse({"restored": [r["path"] for r in results if r.get("status") == "restored"]})
+        response.delete_cookie(COOKIE, httponly=True, samesite="strict")
+        return response
+
     return app
 
 
@@ -393,8 +404,4 @@ def app() -> FastAPI:
         raise RuntimeError(
             "no target model is configured -- set LEDGERPILOT_LLM_API_KEY or HF_TOKEN (see .env.example). "
             "This page runs a real assessment against LedgerPilot's real LLM; it cannot start without one.")
-    code = os.environ.get("DEMO_ACCESS_CODE", "")
-    if len(code) < 12:  # it starts real runs, spends model credit and edits files: never left open
-        raise RuntimeError("set DEMO_ACCESS_CODE to an access code of at least 12 characters (for example the "
-                           "output of: python -c \"import secrets; print(secrets.token_urlsafe(12))\")")
-    return create_app(access_code=SecretStr(code))
+    return create_app(login=True)  # passwordless demo login; "Log out" ends the session and restores the target

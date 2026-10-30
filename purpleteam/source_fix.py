@@ -21,13 +21,16 @@ from purpleteam.codemods.author import Complete
 from purpleteam.codemods.base import VerificationFailed, VerifiedCodemod
 from purpleteam.codemods.catalog import CodemodCatalog, pattern_key
 from purpleteam.codemods.context import fix_context, source_statement
+from purpleteam.codemods.hardening import hardening_candidate
 from purpleteam.codemods.propose import propose
 from purpleteam.codemods.restore import SourceSnapshots
-from purpleteam.codemods.verify import new_calls
+from purpleteam.codemods.verify import new_calls, verify
 from purpleteam.concurrency import limit
+from purpleteam.hardening_scan import HARDENING_KINDS
 from purpleteam.sast import Scanner, StaticFinding
 
 AUTO_APPROVAL = "auto-approved by verification (rescan + invariant), not human-reviewed"
+HARDENING_APPROVAL = "auto-approved: fixed hardening clause appended, proven by rescan + invariant (not human-reviewed)"
 
 
 @dataclass
@@ -109,10 +112,13 @@ async def fix_sources(findings: list[StaticFinding], repo: Path, scanner: Scanne
 async def _approved(finding: StaticFinding, repo: Path, path: Path, scanner: Scanner, catalog: CodemodCatalog,
                     complete: Complete | None, ledger: Any, display: str) -> tuple[VerifiedCodemod | str, str]:
     """(codemod, how it was approved), or (reason it cannot be applied, "")."""
-    key = pattern_key(finding.kind, source_statement(path, finding.line))
+    original = source_statement(path, finding.line)
+    key = pattern_key(finding.kind, original)
     cached = catalog.get(key)
     if cached is not None:
         return cached, "approved earlier (catalog, exact source match)"
+    if finding.kind in HARDENING_KINDS:  # a fixed, deterministic clause -- no model, still proven before it is written
+        return await _harden(finding, original, path, scanner, catalog, ledger, display)
     if complete is None:
         return "no approved fix in the catalog, and no model configured to draft one", ""
     drafted = await propose(finding, path, scanner, catalog, complete=complete,
@@ -129,3 +135,24 @@ async def _approved(finding: StaticFinding, repo: Path, path: Path, scanner: Sca
                                                         "verified_by": list(drafted.verified_by),
                                                         "approval": AUTO_APPROVAL})
     return drafted, AUTO_APPROVAL
+
+
+async def _harden(finding: StaticFinding, original: str, path: Path, scanner: Scanner, catalog: CodemodCatalog,
+                  ledger: Any, display: str) -> tuple[VerifiedCodemod | str, str]:
+    """Append the fixed hardening clause to a prompt / tool description and prove it the same way a drafted
+    fix is proven: the scanner rescan no longer flags it and the independent invariant holds. No model, but
+    never written unverified. The clause is only ever added once -- the scanner skips already-hardened text."""
+    candidate = hardening_candidate(finding, original)
+    if candidate is None:
+        return "the statement does not end in a string the hardening clause can attach to", ""
+    try:
+        verified = await asyncio.to_thread(verify, candidate, finding, path, scanner)
+    except VerificationFailed as error:
+        return str(error), ""
+    if "invariant" not in verified.verified_by:
+        return "the hardening clause could not be independently verified", ""
+    catalog.approve(pattern_key(finding.kind, original), verified)
+    ledger.append("defender", "source_patch_approved", {"kind": finding.kind, "path": display,
+                                                        "verified_by": list(verified.verified_by),
+                                                        "approval": HARDENING_APPROVAL})
+    return verified, HARDENING_APPROVAL

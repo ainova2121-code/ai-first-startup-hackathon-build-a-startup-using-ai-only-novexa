@@ -1,11 +1,12 @@
-"""Access-code login for the live demo, so it can sit behind a public URL (a tunnel, a VM).
+"""Passwordless login for the live demo.
 
-One shared code (``DEMO_ACCESS_CODE``), compared in constant time. The right code earns an HttpOnly,
-SameSite=Strict session cookie (Secure over HTTPS), signed with a key that lives only in this process, so a
-restart signs everyone out. Routes need that cookie except for login and the fixed, synthetic attack-corpus
-JSON endpoint, which is intentionally public. Wrong codes are counted per client address (the real one when a
-local TLS proxy forwards it), and too many in a window lock only that client out, so no one can lock out everyone
-else. The page echoes nothing a visitor typed.
+One click earns a signed, HttpOnly, SameSite=Strict session cookie (Secure over HTTPS). There is no
+secret to type -- this is a demo. The cookie still gates the app's routes, so "Log out" can end a session
+(``/logout`` in ``live_demo``, which also restores the target), and the signing key lives only in this
+process, so a restart signs everyone out. The fixed, synthetic attack-corpus JSON endpoint stays public.
+
+This is deliberately open: anyone with the URL can start a run (which spends model credit and edits the
+demo target's files). It is meant for a short-lived demo deployment, never a standing public service.
 """
 
 from __future__ import annotations
@@ -15,32 +16,43 @@ import secrets
 import time
 from hashlib import sha256
 
-from fastapi import FastAPI, Form, Request
+from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
-from pydantic import SecretStr
 
 COOKIE = "pt_session"
 SESSION_SECONDS = 12 * 3600
-MAX_FAILURES, WINDOW_SECONDS = 10, 600
-MAX_TRACKED_CLIENTS = 10_000  # bounds the memory a flood of addresses can take
 HEADERS = {"X-Content-Type-Options": "nosniff", "X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer"}
-NOTICES = {"": "", "wrong": "That code is not right.", "locked": "Too many wrong codes; try again in a few minutes."}
 
 PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>purpleteam · sign in</title><style>
-body{{margin:0;min-height:100vh;display:grid;place-items:center;background:#0A0D13;color:#E6EDF3;font:15px system-ui,sans-serif}}
-form{{width:min(360px,calc(100vw - 32px));padding:28px;border:1px solid #243041;border-radius:14px;background:#0F141C}}
-h1{{font-size:20px;margin:0 0 6px}}p{{color:#8B98A9;margin:0 0 18px}}.bad{{color:#E25555;min-height:20px;margin:10px 0 0}}
-input{{width:100%;box-sizing:border-box;padding:11px 12px;border-radius:8px;border:1px solid #243041;background:#131A24;color:#E6EDF3;font-size:15px}}
-button{{width:100%;margin-top:12px;padding:11px;border:0;border-radius:8px;background:#3FB96B;color:#06120a;font-weight:700;cursor:pointer}}
-</style></head><body><form method="post" action="/login"><h1>purpleteam</h1><p>Enter the access code for this demo.</p>
-<input type="password" name="code" autocomplete="current-password" autofocus required aria-label="Access code">
-<button type="submit">Sign in</button><div class="bad" role="alert">{notice}</div></form></body></html>"""
+<title>AIQ Security &middot; sign in</title><style>
+*{box-sizing:border-box}
+body{margin:0;min-height:100vh;display:grid;place-items:center;font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif;color:#E6EDF3;
+ background:radial-gradient(1200px 600px at 50% -10%,#141b27 0%,#0A0D13 60%)}
+.card{width:min(400px,calc(100vw - 32px));padding:36px 32px;border:1px solid #1d2735;border-radius:18px;text-align:center;
+ background:linear-gradient(180deg,rgba(21,27,39,0.9),rgba(15,20,28,0.9));box-shadow:0 24px 60px rgba(0,0,0,0.45)}
+.mark{width:46px;height:46px;margin:0 auto 18px;border-radius:12px;display:grid;place-items:center;font-size:22px;
+ background:linear-gradient(135deg,#4F8BFF,#8B5CF6);box-shadow:0 8px 24px rgba(79,139,255,0.35)}
+h1{font-size:22px;margin:0 0 4px;letter-spacing:-0.2px}
+.sub{color:#8B98A9;margin:0 0 4px;font-size:14px}
+.note{color:#5d6b7d;margin:0 0 24px;font-size:12.5px}
+button{width:100%;padding:13px;border:0;border-radius:10px;font-weight:700;font-size:15px;cursor:pointer;color:#06101F;
+ background:linear-gradient(135deg,#4F8BFF,#8B5CF6);transition:transform .08s ease,filter .15s ease}
+button:hover{filter:brightness(1.08)}button:active{transform:translateY(1px)}
+.foot{margin-top:18px;color:#5d6b7d;font-size:11.5px;display:flex;align-items:center;justify-content:center;gap:6px}
+.pulse{width:7px;height:7px;border-radius:50%;background:#3FB96B;box-shadow:0 0 0 0 rgba(63,185,107,0.6);animation:p 2s infinite}
+@keyframes p{0%{box-shadow:0 0 0 0 rgba(63,185,107,0.5)}70%{box-shadow:0 0 0 7px rgba(63,185,107,0)}100%{box-shadow:0 0 0 0 rgba(63,185,107,0)}}
+</style></head><body><form class="card" method="post" action="/login">
+<div class="mark">&#9680;</div>
+<h1>AIQ Security</h1>
+<p class="sub">Autonomous AI purple-team platform</p>
+<p class="note">Live demo &mdash; no sign-in required</p>
+<button type="submit">Enter the demo</button>
+<div class="foot"><span class="pulse"></span>Demo environment</div>
+</form></body></html>"""
 
 
-def install_login(app: FastAPI, access_code: SecretStr) -> None:
+def install_login(app: FastAPI) -> None:
     key = secrets.token_bytes(32)
-    failures: dict[str, list[float]] = {}  # client address -> times of its recent wrong codes
 
     def sign(expires: int, nonce: str) -> str:
         return hmac.new(key, f"{expires}.{nonce}".encode(), sha256).hexdigest()
@@ -51,18 +63,6 @@ def install_login(app: FastAPI, access_code: SecretStr) -> None:
             return int(expires) > time.time() and hmac.compare_digest(signature, sign(int(expires), nonce))
         except ValueError:
             return False
-
-    def recent(client: str) -> list[float]:
-        cutoff = time.time() - WINDOW_SECONDS
-        for address in list(failures):  # forget wrong codes older than the window, and clients with none left
-            failures[address] = [t for t in failures[address] if t > cutoff]
-            if not failures[address]:
-                del failures[address]
-        return failures.get(client, [])
-
-    def record_failure(client: str) -> None:
-        if client in failures or len(failures) < MAX_TRACKED_CLIENTS:
-            failures.setdefault(client, []).append(time.time())
 
     @app.middleware("http")
     async def require_session(request: Request, call_next) -> Response:
@@ -77,17 +77,11 @@ def install_login(app: FastAPI, access_code: SecretStr) -> None:
         return response
 
     @app.get("/login")
-    def login_page(failed: str = "") -> HTMLResponse:
-        return HTMLResponse(PAGE.format(notice=NOTICES.get(failed, "")))
+    def login_page() -> HTMLResponse:
+        return HTMLResponse(PAGE)
 
     @app.post("/login")
-    def login(request: Request, code: str = Form(..., max_length=256)) -> Response:
-        client = request.client.host if request.client else "unknown"
-        if len(recent(client)) >= MAX_FAILURES:
-            return RedirectResponse("/login?failed=locked", 303)
-        if not hmac.compare_digest(code.encode(), access_code.get_secret_value().encode()):
-            record_failure(client)
-            return RedirectResponse("/login?failed=wrong", 303)
+    def login(request: Request) -> Response:
         expires, nonce = int(time.time()) + SESSION_SECONDS, secrets.token_hex(16)
         response = RedirectResponse("/", 303)
         secure = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"

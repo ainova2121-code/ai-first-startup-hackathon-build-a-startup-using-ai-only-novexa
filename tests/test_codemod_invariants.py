@@ -57,7 +57,10 @@ def test_unparseable_source_is_reported_not_raised():
 
 
 def test_every_mapped_bandit_kind_has_an_invariant():
-    assert set(INVARIANTS) == set(BANDIT_KINDS.values())
+    from purpleteam.hardening_scan import HARDENING_KINDS
+    assert set(BANDIT_KINDS.values()) <= set(INVARIANTS)  # every scannable code-vuln kind has an independent check
+    # the only invariants that are not for a bandit kind are the prompt / tool-description hardening ones
+    assert set(INVARIANTS) - set(BANDIT_KINDS.values()) == set(HARDENING_KINDS)
 
 
 def test_sql_built_for_a_query_helper_is_caught_not_only_direct_execute_calls():

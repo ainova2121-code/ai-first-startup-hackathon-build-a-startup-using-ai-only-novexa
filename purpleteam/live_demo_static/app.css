@@ -21,7 +21,7 @@ button { font-family: var(--sans); cursor: pointer; }
 
 /* header */
 .topbar { display: flex; align-items: center; justify-content: space-between; gap: 18px; flex-wrap: wrap;
-          padding: 14px 28px; border-bottom: 1px solid var(--border-soft); position: sticky; top: 0;
+          padding: 14px 112px 14px 28px; border-bottom: 1px solid var(--border-soft); position: sticky; top: 0;
           background: rgba(10,13,19,0.92); backdrop-filter: blur(8px); z-index: 5; }
 .brand { display: flex; align-items: center; gap: 10px; font-weight: 600; font-size: 15px; }
 .brand-mark { width: 9px; height: 9px; border-radius: 2px; background: linear-gradient(135deg, var(--steel), var(--violet)); }
@@ -34,6 +34,9 @@ button { font-family: var(--sans); cursor: pointer; }
 .btn.primary { background: var(--steel); border-color: var(--steel); color: #06101F; }
 .btn.danger { border-color: rgba(224,83,79,0.55); color: #F0A3A0; }
 .btn.danger:not(:disabled):hover { background: var(--crimson-dim); }
+.btn.logout { position: absolute; top: 11px; right: 24px; z-index: 6;
+              border-color: rgba(224,83,79,0.4); color: var(--text-muted); white-space: nowrap; }
+.btn.logout:not(:disabled):hover { color: #F0A3A0; border-color: rgba(224,83,79,0.6); }
 .btn:disabled { opacity: 0.45; cursor: default; }
 .count { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 6px; border-radius: 9px; font-size: 11px;
          background: var(--amber-dim); color: var(--amber); }
