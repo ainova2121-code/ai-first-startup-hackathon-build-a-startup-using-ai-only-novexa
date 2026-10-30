@@ -1,12 +1,31 @@
-This project's source code is licensed under the MIT License (see LICENSE).
+AIQ Security - Copyright (c) 2026 Aishwarya R. All Rights Reserved.
 
-Third-party data included in this repository is NOT covered by the MIT License:
+The source code in this repository is proprietary. See LICENSE for the terms, including the limited
+permission granted for hackathon evaluation.
 
-- data/invoices/*.pdf and data/invoices/manifest.json
-  Real invoices from the FCC political public file, via the amazon/ConfBench dataset.
-  Licensed under Creative Commons Attribution-NonCommercial 4.0 (CC BY-NC 4.0).
-  Used here for non-commercial demonstration only. See data/README.md.
-  Source: https://huggingface.co/datasets/amazon/ConfBench
+Third-party material in this repository is NOT covered by LICENSE and remains under its own terms:
 
-The runtime depends on third-party tools under their own licenses, including
-Microsoft PyRIT and Protect AI LLM Guard.
+- data/invoices/*.pdf
+  Real invoices from the FCC political public file, as published by Amazon in the amazon/ConfBench
+  dataset (FCC Invoices Verified subset): https://huggingface.co/datasets/amazon/ConfBench
+  License: Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0),
+  https://creativecommons.org/licenses/by-nc/4.0/
+  A subset of the dataset was selected; the PDFs have not been edited in this repository.
+
+- data/invoices/manifest.json
+  Fields curated from those invoices (vendor, invoice number, PO/order number, net amount): an
+  adaptation of the dataset above, shared under the same CC BY-NC 4.0 terms. The vendor bank accounts
+  and emails used by the demo are synthetic, not from the dataset.
+
+  Both are used for non-commercial demonstration only. See data/README.md.
+
+- config/tsa/freetsa/
+  FreeTSA's published public certificates, used only to verify RFC 3161 timestamps.
+
+- purpleteam/console/static/htmx.min.js and htmx-sse.js
+  htmx and its server-sent-events extension, BSD Zero Clause License (0BSD).
+
+The software also depends at runtime on third-party packages under their own permissive licenses,
+including Microsoft PyRIT (MIT), Protect AI LLM Guard (MIT), LangChain and LangGraph (MIT), FastAPI (MIT),
+cryptography (Apache-2.0 or BSD-3-Clause) and PyTorch (BSD-3-Clause). They are installed from their own
+distributions (pinned in uv.lock) and are not redistributed in this repository.

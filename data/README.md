@@ -2,8 +2,8 @@
 
 `invoices/` holds 22 real invoices that US TV stations and cable networks filed in the FCC political public file. `manifest.json` lists the curated fields for each one (vendor, invoice number, PO/order number, net amount).
 
-- Source: [amazon/ConfBench](https://huggingface.co/datasets/amazon/ConfBench), FCC Invoices Verified subset (`__original.pdf` files that have a text layer).
-- License: CC BY-NC 4.0. Used here for non-commercial demonstration.
+- Source: [amazon/ConfBench](https://huggingface.co/datasets/amazon/ConfBench) by Amazon, FCC Invoices Verified subset (`__original.pdf` files that have a text layer). The PDFs have not been edited in this repository.
+- License: [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/). Used here for non-commercial demonstration only; `manifest.json` is an adaptation shared under the same terms. Replace this data with synthetic invoices before any commercial use.
 - Amounts come from the dataset's verified ground truth (`NetAmountDue`). Vendor, invoice and order numbers were curated by AI and checked against each PDF's text.
 - Synthetic: vendor bank accounts and emails, because public invoices don't include them.
 
