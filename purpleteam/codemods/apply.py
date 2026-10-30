@@ -3,6 +3,9 @@
 This is deliberately separate from drafting: a model candidate is never eligible for direct
 application. The source file is rechecked with the configured scanner immediately before writing,
 the replacement is atomic, and the returned diff is generated from the bytes actually written.
+A fix no human reviewed must also pass, freshly, the bar it was auto-approved on (the independent
+invariant, and no call its file did not already make), however it reached here -- including a reused
+or hand-edited catalog entry, whose stored claims are never trusted.
 """
 
 from __future__ import annotations
@@ -16,16 +19,17 @@ from pathlib import Path
 from purpleteam.codemods.base import CodemodCandidate, VerifiedCodemod, VerificationFailed
 from purpleteam.codemods.context import occurrence
 from purpleteam.codemods.restore import read_exact
-from purpleteam.codemods.verify import verify
+from purpleteam.codemods.verify import new_calls, verify
 from purpleteam.sast import Scanner, StaticFinding
 
 
 def apply_approved(codemod: VerifiedCodemod, finding: StaticFinding, repo: Path,
-                   scanner: Scanner) -> dict:
+                   scanner: Scanner, *, human_reviewed: bool = False) -> dict:
     """Apply a verified codemod to its target file and return an evidence-backed change record.
 
     Raises ``VerificationFailed`` without changing the file if the path escapes ``repo``, the
-    exact source is stale/ambiguous, or a fresh scanner/invariant check fails.
+    exact source is stale/ambiguous, or a fresh scanner/invariant check fails. Unless
+    ``human_reviewed``, the fresh check must include the invariant and the fix may add no new call.
     """
     root = repo.resolve()
     candidate_path = Path(finding.file)
@@ -54,6 +58,13 @@ def apply_approved(codemod: VerifiedCodemod, finding: StaticFinding, repo: Path,
     freshly_verified = verify(candidate, finding, path, scanner)
     if freshly_verified.replacement != codemod.replacement:
         raise VerificationFailed("re-verification did not reproduce the approved replacement")
+    if not human_reviewed:
+        if "invariant" not in freshly_verified.verified_by:
+            raise VerificationFailed("not human-reviewed, and not independently verified by an invariant: "
+                                     "needs human review")
+        if added := new_calls(before, codemod.replacement):
+            raise VerificationFailed(f"not human-reviewed, and the fix adds calls the file never made "
+                                     f"({', '.join(sorted(added))}): needs human review")
 
     after = before[:at] + replacement + before[at + len(original):]
     # Write to the same directory so os.replace is atomic on the target filesystem.

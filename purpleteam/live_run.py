@@ -32,6 +32,7 @@ from purpleteam.codemods.catalog import CodemodCatalog
 from purpleteam.codemods.restore import SourceSnapshots
 from purpleteam.discovery import AgentInfo, DiscoveredTool, TargetProfile
 from purpleteam.explainer import explain
+from purpleteam.gate_scan import UnguardedActionScanner
 from purpleteam.identity import inventory, posture
 from purpleteam.oracle import CANARY_ACCOUNT, HONEYTOKEN, AnyOracle, CanaryOracle, LeakOracle, LoopOracle, not_hijacked
 from purpleteam.quick import static_run
@@ -45,12 +46,14 @@ MODES = ("static", "full", "advanced")
 
 
 def _attack_scanner(profile):
-    """Bandit for code vulnerabilities, plus prompt / tool-description hardening driven by what discovery
-    captured. Only used on an attack run, where a hardening fix is scoped to the agents that actually breached."""
+    """Bandit for code vulnerabilities, plus prompt / tool-description hardening and the human-approval gate,
+    both driven by what discovery captured. Only used on an attack run, where a hardening or gate fix is scoped
+    to the agents and tools that actually breached."""
     prompts = {agent.name: agent.prompt for agent in profile.agent_info}
     dangerous = profile.dangerous_tools
     tools = {tool.name: tool.description for tool in profile.tools if tool.name in dangerous and tool.description}
-    return CompositeScanner([BanditScanner(), PromptHardeningScanner(prompts, tools)])
+    return CompositeScanner([BanditScanner(), PromptHardeningScanner(prompts, tools),
+                             UnguardedActionScanner.from_profile(profile)])
 # "all" = the custom-dataset suite (model-free). "full" = that suite PLUS context-aware + adaptive attacks.
 # The four PyRIT strategies and "full" need an attacker model; the rest run with no model at all.
 ATTACK_TYPES = ("all", "full", "corpus", "obfuscation", "redteam", "crescendo", "pair", "tap")

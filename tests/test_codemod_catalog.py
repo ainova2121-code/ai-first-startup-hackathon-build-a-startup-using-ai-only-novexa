@@ -2,7 +2,7 @@
 never reused for a different piece of code just because the finding kind matches."""
 
 from purpleteam.codemods.base import VerifiedCodemod
-from purpleteam.codemods.catalog import CodemodCatalog, pattern_key
+from purpleteam.codemods.catalog import HUMAN_REVIEWED, UNRECORDED, CodemodCatalog, pattern_key
 
 CODEMOD = VerifiedCodemod("sql_injection", "cursor.execute(f'...')", "cursor.execute('...', (x,))", "parameterized")
 
@@ -38,3 +38,22 @@ def test_pattern_key_distinguishes_different_kinds_for_the_same_text():
 
 def test_an_unknown_key_returns_none(tmp_path):
     assert CodemodCatalog(tmp_path).get("never-approved") is None
+
+
+def test_each_entry_records_who_approved_it(tmp_path):
+    catalog = CodemodCatalog(tmp_path)
+    key = pattern_key(CODEMOD.kind, CODEMOD.original)
+    assert catalog.approval(key) is None
+    catalog.approve(key, CODEMOD, approval="auto-approved by verification (not human-reviewed)")
+    assert catalog.approval(key) == "auto-approved by verification (not human-reviewed)"
+    assert catalog.get(key) == CODEMOD  # the label never leaks into the codemod itself
+    catalog.approve(key, CODEMOD)
+    assert catalog.approval(key) == HUMAN_REVIEWED
+
+
+def test_an_entry_with_no_recorded_approval_is_never_presumed_human_reviewed(tmp_path):
+    import json
+    from dataclasses import asdict
+    key = pattern_key(CODEMOD.kind, CODEMOD.original)
+    (tmp_path / f"{key}.codemod.json").write_text(json.dumps(asdict(CODEMOD)))
+    assert CodemodCatalog(tmp_path).approval(key) == UNRECORDED

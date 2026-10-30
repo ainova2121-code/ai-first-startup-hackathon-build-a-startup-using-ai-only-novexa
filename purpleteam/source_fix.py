@@ -19,18 +19,21 @@ from typing import Any, Callable
 from purpleteam.codemods.apply import apply_approved
 from purpleteam.codemods.author import Complete
 from purpleteam.codemods.base import VerificationFailed, VerifiedCodemod
-from purpleteam.codemods.catalog import CodemodCatalog, pattern_key
+from purpleteam.codemods.catalog import HUMAN_REVIEWED, CodemodCatalog, pattern_key
 from purpleteam.codemods.context import fix_context, source_statement
+from purpleteam.codemods.gate import gate_candidate
 from purpleteam.codemods.hardening import hardening_candidate
 from purpleteam.codemods.propose import propose
 from purpleteam.codemods.restore import SourceSnapshots
 from purpleteam.codemods.verify import new_calls, verify
 from purpleteam.concurrency import limit
+from purpleteam.gate_scan import GATE_KIND
 from purpleteam.hardening_scan import HARDENING_KINDS
 from purpleteam.sast import Scanner, StaticFinding
 
 AUTO_APPROVAL = "auto-approved by verification (rescan + invariant), not human-reviewed"
 HARDENING_APPROVAL = "auto-approved: fixed hardening clause appended, proven by rescan + invariant (not human-reviewed)"
+GATE_APPROVAL = "auto-approved: fixed human-approval gate, proven by rescan + invariant (not human-reviewed)"
 
 
 @dataclass
@@ -72,23 +75,23 @@ async def fix_sources(findings: list[StaticFinding], repo: Path, scanner: Scanne
     # them stays strictly one at a time, below, in bottom-up order.
     gate = asyncio.Semaphore(limit())
 
-    async def approve(finding: StaticFinding) -> tuple[VerifiedCodemod | str, str]:
+    async def approve(finding: StaticFinding) -> tuple[VerifiedCodemod | str, str, bool]:
         async with gate:
             try:
                 return await _approved(finding, repo, resolve(repo, finding.file), scanner, catalog, complete,
                                        ledger, display(repo, finding.file))
             except (OSError, ValueError, VerificationFailed) as error:
-                return str(error), ""
+                return str(error), "", False
             except Exception as error:  # an unexpected failure on one finding must not sink every other fix
-                return f"drafting a fix failed ({type(error).__name__}); nothing was changed", ""
+                return f"drafting a fix failed ({type(error).__name__}); nothing was changed", "", False
 
     approvals = await asyncio.gather(*(approve(finding) for finding in ordered))
-    for finding, (codemod, approval) in zip(ordered, approvals):
+    for finding, (codemod, approval, human_reviewed) in zip(ordered, approvals):
         shown = display(repo, finding.file)
         try:
             if isinstance(codemod, str):
                 raise VerificationFailed(codemod)
-            change = apply_approved(codemod, finding, repo, scanner)
+            change = apply_approved(codemod, finding, repo, scanner, human_reviewed=human_reviewed)
         except (OSError, ValueError, VerificationFailed) as error:
             skip = {"kind": finding.kind, "path": shown, "line": finding.line, "reason": str(error)}
             result.skipped.append(skip)
@@ -110,49 +113,57 @@ async def fix_sources(findings: list[StaticFinding], repo: Path, scanner: Scanne
 
 
 async def _approved(finding: StaticFinding, repo: Path, path: Path, scanner: Scanner, catalog: CodemodCatalog,
-                    complete: Complete | None, ledger: Any, display: str) -> tuple[VerifiedCodemod | str, str]:
-    """(codemod, how it was approved), or (reason it cannot be applied, "")."""
+                    complete: Complete | None, ledger: Any,
+                    display: str) -> tuple[VerifiedCodemod | str, str, bool]:
+    """(codemod, how it was approved, whether a human reviewed it), or (reason it cannot be applied, "", False)."""
     original = source_statement(path, finding.line)
     key = pattern_key(finding.kind, original)
     cached = catalog.get(key)
-    if cached is not None:
-        return cached, "approved earlier (catalog, exact source match)"
-    if finding.kind in HARDENING_KINDS:  # a fixed, deterministic clause -- no model, still proven before it is written
-        return await _harden(finding, original, path, scanner, catalog, ledger, display)
+    if cached is not None:  # the label it was approved under travels with every reuse
+        approval = catalog.approval(key)
+        return cached, f"reused from the catalog (exact source match): {approval}", approval == HUMAN_REVIEWED
+    if finding.kind in HARDENING_KINDS or finding.kind == GATE_KIND:  # a fixed transform -- no model, still proven
+        return await _deterministic(finding, original, path, scanner, catalog, ledger, display)
     if complete is None:
-        return "no approved fix in the catalog, and no model configured to draft one", ""
+        return "no approved fix in the catalog, and no model configured to draft one", "", False
     drafted = await propose(finding, path, scanner, catalog, complete=complete,
                             context=fix_context(repo, path, finding.line))
     if drafted is None:
-        return "no fix could be drafted that passed verification", ""
+        return "no fix could be drafted that passed verification", "", False
     if "invariant" not in drafted.verified_by:
-        return "verified by rescan only, with no independent invariant: needs human review", ""
+        return "verified by rescan only, with no independent invariant: needs human review", "", False
     added = new_calls(path.read_text(encoding="utf-8"), drafted.replacement)
     if added:
-        return f"the fix adds calls the file never made ({', '.join(sorted(added))}): needs human review", ""
-    catalog.approve(key, drafted)
+        return f"the fix adds calls the file never made ({', '.join(sorted(added))}): needs human review", "", False
+    catalog.approve(key, drafted, approval=AUTO_APPROVAL)
     ledger.append("defender", "source_patch_approved", {"kind": finding.kind, "path": display,
                                                         "verified_by": list(drafted.verified_by),
                                                         "approval": AUTO_APPROVAL})
-    return drafted, AUTO_APPROVAL
+    return drafted, AUTO_APPROVAL, False
 
 
-async def _harden(finding: StaticFinding, original: str, path: Path, scanner: Scanner, catalog: CodemodCatalog,
-                  ledger: Any, display: str) -> tuple[VerifiedCodemod | str, str]:
-    """Append the fixed hardening clause to a prompt / tool description and prove it the same way a drafted
-    fix is proven: the scanner rescan no longer flags it and the independent invariant holds. No model, but
-    never written unverified. The clause is only ever added once -- the scanner skips already-hardened text."""
-    candidate = hardening_candidate(finding, original)
+async def _deterministic(finding: StaticFinding, original: str, path: Path, scanner: Scanner,
+                         catalog: CodemodCatalog, ledger: Any, display: str) -> tuple[VerifiedCodemod | str, str, bool]:
+    """A fixed transform -- the hardening clause appended to a prompt / tool description, or the human-approval
+    gate in an unguarded dangerous tool -- proven the same way a drafted fix is: the scanner rescan no longer
+    flags it and the independent invariant holds. No model, but never written unverified, and only ever applied
+    once -- the scanners skip text already hardened or gated."""
+    if finding.kind == GATE_KIND:
+        candidate, approval = gate_candidate(finding, original), GATE_APPROVAL
+        unusable = "the tool's first statement is not a single simple statement the gate can replace"
+    else:
+        candidate, approval = hardening_candidate(finding, original), HARDENING_APPROVAL
+        unusable = "the statement does not end in a string the hardening clause can attach to"
     if candidate is None:
-        return "the statement does not end in a string the hardening clause can attach to", ""
+        return unusable, "", False
     try:
         verified = await asyncio.to_thread(verify, candidate, finding, path, scanner)
     except VerificationFailed as error:
-        return str(error), ""
+        return str(error), "", False
     if "invariant" not in verified.verified_by:
-        return "the hardening clause could not be independently verified", ""
-    catalog.approve(pattern_key(finding.kind, original), verified)
+        return "the fixed transform could not be independently verified", "", False
+    catalog.approve(pattern_key(finding.kind, original), verified, approval=approval)
     ledger.append("defender", "source_patch_approved", {"kind": finding.kind, "path": display,
                                                         "verified_by": list(verified.verified_by),
-                                                        "approval": HARDENING_APPROVAL})
-    return verified, HARDENING_APPROVAL
+                                                        "approval": approval})
+    return verified, approval, False

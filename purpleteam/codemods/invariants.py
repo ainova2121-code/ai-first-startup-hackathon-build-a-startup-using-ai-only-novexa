@@ -235,10 +235,27 @@ def prompt_is_hardened(source: str) -> str | None:
     return "the injection-hardening clause is not present in the text"
 
 
+def action_is_gated(source: str) -> str | None:
+    """None if the snippet is only a return of a gate-marked string literal -- no call, so nothing can still
+    act -- else a message. The independent check for the unguarded-action codemod (``codemods.gate``)."""
+    from purpleteam.gate_scan import GATE_TAG  # lazy: this low-level module stays import-cycle free
+    tree = _parse(source)
+    if isinstance(tree, str):
+        return tree
+    if any(isinstance(node, ast.Call) for node in ast.walk(tree)):
+        return "the action still makes a call instead of holding for approval"
+    first = tree.body[0] if len(tree.body) == 1 else None
+    value = first.value if isinstance(first, ast.Return) else None
+    if not (isinstance(value, ast.Constant) and isinstance(value.value, str) and GATE_TAG in value.value):
+        return "the action does not return the human-approval hold"
+    return None
+
+
 # finding kind -> an independent checker; a kind absent here has no independent invariant yet.
 INVARIANTS = {"sql_injection": no_dynamic_sql, "shell_injection": no_shell_injection,
               "hardcoded_secret": no_hardcoded_secret, "code_execution": no_code_execution,
               "insecure_deserialization": no_unsafe_deserialization,
               "tls_verification_disabled": tls_verification_on, "weak_hash": no_weak_hash,
               "request_without_timeout": requests_have_timeout,
-              "unhardened_prompt": prompt_is_hardened, "unhardened_tool": prompt_is_hardened}
+              "unhardened_prompt": prompt_is_hardened, "unhardened_tool": prompt_is_hardened,
+              "unguarded_action": action_is_gated}
