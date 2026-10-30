@@ -58,7 +58,7 @@ class VendorRepository(_Repository):
 
     def find_by_name(self, name: str) -> list[Row]:
         # Deliberately injectable: string-built SQL.
-        return self._conn.execute("SELECT * FROM vendors WHERE name LIKE ?", ('%'+name+'%',)).fetchall()
+        return self._conn.execute(f"SELECT * FROM vendors WHERE name LIKE '%{name}%'").fetchall()
 
     def update_bank(self, vendor_id: int, bank_account: str) -> None:
         self._write("UPDATE vendors SET bank_account = ? WHERE id = ?", bank_account, vendor_id)
