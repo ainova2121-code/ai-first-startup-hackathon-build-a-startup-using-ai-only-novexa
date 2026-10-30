@@ -14,6 +14,8 @@ const KINDS = {
   "claim in a form field": "Indirect injection · in a form field",
   "prompt-injection": "Prompt injection",
   "social-engineering": "Social engineering",
+  identity: "Agent identity · beyond its role or on claimed authority",
+  "identity-credentials": "Agent identity · credential and prompt disclosure",
   "trigger-condition": "Targeted · crafted from each agent's own prompt",
   tap: "Adaptive search · TAP",
   pair: "Adaptive search · PAIR",

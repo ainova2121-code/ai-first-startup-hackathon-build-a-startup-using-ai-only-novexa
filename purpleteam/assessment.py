@@ -23,6 +23,7 @@ from purpleteam.attack.runner import attacker_system_prompt
 from purpleteam.attack.targeted import prepare_payloads, run_targeted
 from purpleteam.attack.corpus import CANARY_MARK, AttackTemplate, CorpusResult, action_objective, build_corpus, run_corpus
 from purpleteam.attack.exposure import run_unpatched
+from purpleteam.attack.identity import CREDENTIAL_TECHNIQUE
 from purpleteam.attack.regressions import record_breaches
 from purpleteam.audit.ledger import AuditLedger
 from purpleteam.codemods.author import Complete
@@ -48,6 +49,8 @@ from purpleteam.verifier import LegitCheck, VerifyReport
 TargetFactory = Callable[[Any], Target]  # guard (or None) -> a fresh target
 Explainer = Callable[[Finding, Defense, VerifyReport], Explanation]
 Anchorer = Callable[[dict], tuple[dict, list[str]]]  # trust bundle -> (bundle with timestamp anchors, problems)
+# Cases that try to make an agent disclose its prompt or credentials: a reply is never shown, only judged.
+WITHHELD_REPLY_TECHNIQUES = frozenset({"system-prompt-extraction", CREDENTIAL_TECHNIQUE})
 
 
 class Assessment(DefensePass, EvidencePass):
@@ -190,9 +193,9 @@ class Assessment(DefensePass, EvidencePass):
             _emit({"type": "attack_start", "id": result_id, "payload": payload, "technique": technique})
 
         def _on_attack_result(result: CorpusResult, seconds: float) -> None:
-            sensitive_reply = result.technique == "system-prompt-extraction" and bool(
+            sensitive_reply = result.technique in WITHHELD_REPLY_TECHNIQUES and bool(
                 result.reply or result.agent_replies)
-            reply = ("[response withheld: this case checks for system-prompt disclosure]"
+            reply = ("[response withheld: this case checks for prompt or credential disclosure]"
                      if sensitive_reply else result.reply)
             agent_replies = [] if sensitive_reply else result.agent_replies
             _emit({"type": "attack_result", "id": result.id, "technique": result.technique,

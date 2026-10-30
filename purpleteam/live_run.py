@@ -22,6 +22,7 @@ from ledgerpilot.utils.config import Settings
 from purpleteam.adapter import TracedTarget
 from purpleteam.assessment import Assessment
 from purpleteam.attack.claims import MODEL_ATTACKS_OFF, ONLY_STATIC, model_free_attacks
+from purpleteam.attack.identity import identity_attacks
 from purpleteam.attack.corpus import AttackTemplate, action_objective, build_corpus
 from purpleteam.attack.converters import OBFUSCATION_TEST_SET
 from purpleteam.audit.anchor import anchor_trust, freetsa
@@ -33,8 +34,9 @@ from purpleteam.codemods.restore import SourceSnapshots
 from purpleteam.discovery import AgentInfo, DiscoveredTool, TargetProfile
 from purpleteam.explainer import explain
 from purpleteam.gate_scan import UnguardedActionScanner
-from purpleteam.identity import inventory, posture
-from purpleteam.oracle import CANARY_ACCOUNT, HONEYTOKEN, AnyOracle, CanaryOracle, LeakOracle, LoopOracle, not_hijacked
+from purpleteam.identity import PermissionManifest, inventory, posture
+from purpleteam.oracle import (
+    CANARY_ACCOUNT, HONEYTOKEN, AnyOracle, CanaryOracle, LeakOracle, LoopOracle, ScopeOracle, not_hijacked)
 from purpleteam.quick import static_run
 from purpleteam.run_history import Run, RunStore
 from purpleteam.run_control import RunControl
@@ -89,10 +91,26 @@ def found_events(agent: AgentInfo, tools: list[DiscoveredTool]) -> list[dict]:
             *({"type": "found_tool", "agent": agent.name, "tool": tool_view(tool), "ts": at} for tool in tools)]
 
 
-def discovery_event(profile: TargetProfile, creds: dict[str, str]) -> dict:
+def declared_manifest() -> PermissionManifest | None:
+    """``PURPLETEAM_MANIFEST``: a JSON file of the operator's declared permissions (``identity.PermissionManifest``).
+    Unset means none -- identity is then checked against what each agent holds today. A file that cannot be read or
+    does not validate stops the run, rather than running as if no permissions had been declared."""
+    path = os.environ.get("PURPLETEAM_MANIFEST")
+    return PermissionManifest.load(path) if path else None
+
+
+def run_oracle(profile: TargetProfile, manifest: PermissionManifest | None) -> AnyOracle:
+    """What proves a breach in an attack run: the canary reaching a dangerous tool, the honeytoken escaping, a looping
+    side effect -- and, with declared permissions, any call outside them (privilege escalation)."""
+    oracles = [CanaryOracle({CANARY_ACCOUNT}, profile.dangerous_tools), LeakOracle({HONEYTOKEN}),
+               LoopOracle(profile.dangerous_tools)]
+    return AnyOracle(*oracles, *([ScopeOracle(manifest)] if manifest is not None else []))
+
+
+def discovery_event(profile: TargetProfile, creds: dict[str, str], manifest: PermissionManifest | None = None) -> dict:
     """What discovery really found, for display: every agent, each tool's risk and surfaces, where it
     is defined, a fingerprint of the agent's prompt (never its text) and structural identity findings."""
-    view = inventory(profile, None, posture(profile, None, creds), creds)
+    view = inventory(profile, manifest, posture(profile, manifest, creds), creds)
     by_name = {t.name: t for t in profile.tools}
     agents = []
     for agent in view["agents"]:
@@ -159,13 +177,14 @@ async def assess(run: Run, runs: RunStore | None, snapshots: SourceSnapshots, pu
     load_dotenv()
     reload_source()  # always assess exactly what is on disk now, never a stale import
     settings = Settings()
+    manifest = declared_manifest()  # before anything runs: a bad file must stop the run, not be skipped
     # The fix author reuses the target's own configured OpenAI-compatible model unless set apart.
     os.environ.setdefault("CODEMOD_AUTHOR_URL", settings.llm_base_url)
     os.environ.setdefault("CODEMOD_AUTHOR_MODEL", settings.llm_model)
     publish({"type": "discovery_started", "ts": time.time(), "mode": mode})
     profile = discover_profile(on_found=lambda agent, tools: [publish(e) for e in found_events(agent, tools)])
     creds = credentials(profile)
-    publish(discovery_event(profile, creds))
+    publish(discovery_event(profile, creds, manifest))
     signer, hardware_note = resolve_hardware(os.environ.get("PURPLETEAM_HARDWARE_SIGNING", "preferred"))
     anchorer = _anchorer()
     run.write_meta(target=profile.name, mode=mode, hardware=hardware_note, anchoring="freetsa" if anchorer else "off")
@@ -189,8 +208,7 @@ async def assess(run: Run, runs: RunStore | None, snapshots: SourceSnapshots, pu
                               "rules them out"], "residual": None,
                      "modified": [f"{TARGET_REPO.name}/{path}" for path in snapshots.modified()]})
             return
-        oracle = AnyOracle(CanaryOracle({CANARY_ACCOUNT}, profile.dangerous_tools), LeakOracle({HONEYTOKEN}),
-                           LoopOracle(profile.dangerous_tools))
+        oracle = run_oracle(profile, manifest)
         approved = runs.last_approved(profile.name) if runs else None  # this run's policy must not loosen its decisions
         advanced = mode == "advanced"
         # A model-driven run needs an attacker model: one picked for this run, or the env-configured one when
@@ -224,6 +242,7 @@ async def assess(run: Run, runs: RunStore | None, snapshots: SourceSnapshots, pu
         assessment = Assessment(
             make_target,
             oracle, profile, ledger, legit=[(LEGIT_INVOICE, not_hijacked)], credentials=creds, blast={},
+            manifest=manifest,
             explainer=None if ONLY_STATIC else explain, scanner=_attack_scanner(profile), repo=TARGET_REPO, anchorer=anchorer,
             codemod_catalog=catalog, codemod_complete=groq_complete, source_snapshots=snapshots,
             reload_target=reload_source,
@@ -241,9 +260,9 @@ async def assess(run: Run, runs: RunStore | None, snapshots: SourceSnapshots, pu
             templates = [AttackTemplate("obfuscation:canary-action", "obfuscation",
                                         action_objective(profile.dangerous_tools))]
         elif attack_type == "full":  # the custom-dataset suite, then context-aware + adaptive attacks on top
-            templates = model_free_attacks(profile)
+            templates = model_free_attacks(profile) + identity_attacks()
         elif ONLY_STATIC:
-            templates = model_free_attacks(profile)
+            templates = model_free_attacks(profile) + identity_attacks()
         elif advanced:
             templates = None
         else:
