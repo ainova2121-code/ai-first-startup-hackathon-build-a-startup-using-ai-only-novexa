@@ -39,7 +39,7 @@ document.addEventListener("keydown", (ev) => { if (ev.key === "Escape" && expand
 
 // Drag anywhere on a wide visualization to move it left, right, up or down. A press that does not move still
 // clicks what is under it; the click that ends a drag is swallowed so it never opens a node by accident.
-const PANNABLE = ".dm-scroll, .mx-scroll, .sf-scroll";
+const PANNABLE = ".dm-scroll, .mx-scroll, .sf-scroll, .xt-scroll";
 let pan = null;
 const scrollsY = (node) => node && node.scrollHeight > node.clientHeight + 1;
 

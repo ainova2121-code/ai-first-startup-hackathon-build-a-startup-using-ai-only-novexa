@@ -36,6 +36,7 @@ class Observation:
     tool_calls: list[ToolCall] = field(default_factory=list)
     status: int | None = None  # the HTTP status, where the target speaks HTTP
     attempts: list[ToolCall] = field(default_factory=list)
+    agent_replies: list[dict[str, str]] = field(default_factory=list)
 
     def values(self) -> list[str]:
         return [str(v) for call in self.tool_calls for v in call.args.values()]

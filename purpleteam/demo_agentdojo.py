@@ -22,7 +22,9 @@ from dotenv import load_dotenv
 from ledgerpilot.utils.config import Settings
 from purpleteam.assessment import Assessment
 from purpleteam.attack.outcome import INCONCLUSIVE
-from purpleteam.attack.advanced import multilingual_templates, system_prompt_templates, tool_output_templates
+from purpleteam.attack.advanced import (
+    multilingual_test_cases, system_prompt_test_cases, tool_output_templates,
+)
 from purpleteam.attack.corpus import action_objective, build_corpus
 from purpleteam.audit.ledger import AuditLedger
 from purpleteam.oracle import CANARY_ACCOUNT, CanaryOracle
@@ -62,8 +64,8 @@ async def main() -> None:
     assessment = Assessment(
         lambda guard: AgentDojoTarget(model_id=AGENTDOJO_MODEL_ID, guard=guard), oracle, profile, ledger, legit=[],
     )
-    templates = (build_corpus(action_objective(profile.dangerous_tools)) + multilingual_templates(profile)
-                 + system_prompt_templates(profile.agent_info) + tool_output_templates(profile))
+    templates = (build_corpus(action_objective(profile.dangerous_tools)) + multilingual_test_cases(profile)
+                 + system_prompt_test_cases(profile.agent_info) + tool_output_templates(profile))
 
     print(f"[attack]  running the seed corpus against agentdojo:{DEFAULT_SUITE}:{DEFAULT_USER_TASK} "
          "(a real email/calendar/drive agent)...")

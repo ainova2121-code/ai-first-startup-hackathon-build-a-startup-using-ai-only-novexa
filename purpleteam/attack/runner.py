@@ -25,6 +25,7 @@ from purpleteam.attack.pyrit_scorer import OracleScorer
 from purpleteam.attack.pyrit_target import PlatformPromptTarget
 from purpleteam.discovery import AgentInfo
 from purpleteam.oracle import CANARY_ACCOUNT, CanaryOracle, Oracle
+from purpleteam.run_control import RunControl
 
 STRATEGIES = {"redteam": RedTeamingAttack, "crescendo": CrescendoAttack}
 
@@ -98,9 +99,10 @@ async def run_campaign(
     adversarial_model: str | None = None,
     system_prompt: str = ATTACKER_SYSTEM_PROMPT,
     timeout: float | None = 180,
+    control: RunControl | None = None,
 ) -> CampaignResult:
     await initialize_pyrit_async(IN_MEMORY, silent=True)
-    pyrit_target = PlatformPromptTarget(target=target)
+    pyrit_target = PlatformPromptTarget(target=target, control=control)
     oracle = oracle or CanaryOracle(canaries or {CANARY_ACCOUNT}, dangerous_tools)
     scorer = OracleScorer(target=pyrit_target, oracle=oracle)
 
@@ -119,7 +121,8 @@ async def run_campaign(
     except Exception:  # a timeout, or a mid-attack failure (the adversarial model refusing
         completed = False  # outright can break PyRIT's own retry loop): whatever the target
                            # actually saw is still real evidence, never a reason to crash the run
-    breached, detail, outcome = _campaign_outcome(pyrit_target, oracle, completed=completed)
+    breached, detail, outcome = _campaign_outcome(
+        pyrit_target, oracle, completed=completed and not (control and control.stop_requested))
     return CampaignResult(
         objective=objective, strategy=strategy, breached=breached, detail=detail,
         outcome=outcome, attempts=pyrit_target.attempts, observations=pyrit_target.observations,

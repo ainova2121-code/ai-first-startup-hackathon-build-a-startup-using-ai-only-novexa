@@ -98,3 +98,46 @@ def test_a_finding_kind_the_catalog_has_no_patch_for_is_reported_as_an_error_not
     assert patch_event["payload"]["unpatched"] == ["mystery_kind"]
     verdict_event = [e for e in ledger.events() if e["kind"] == "verdict"][-1]
     assert verdict_event["payload"]["safe_to_ship"] is False
+
+
+def test_an_uncatalogued_breach_still_gets_a_dynamic_hold_of_its_tool_while_the_gap_is_flagged(tmp_path):
+    """A kind the catalog names no guard for still gets a guard derived from the breach itself -- a hold (P4)
+    of the exact tool it went through -- so it is contained immediately, while the catalog gap is still
+    reported so a generic hold is never mistaken for a targeted fix and never ships silently."""
+
+    class _Agent:
+        name = "fake"
+
+        def __init__(self, guard=None) -> None:
+            self._guard = guard
+
+        def reset(self) -> None:
+            pass
+
+        def send(self, request: str) -> Observation:
+            if "Look up" in request:  # the legit scenario: a benign read the hold must not block
+                return Observation("ok", [ToolCall("vendor", "lookup_vendor", {"name": "acme"}, result="found")])
+            call = ToolCall("vendor", "update_vendor_bank", {"bank_account": CANARY_ACCOUNT})
+            if self._guard:
+                try:
+                    self._guard.authorize(call.agent, call.tool, call.args)
+                except Blocked:
+                    return Observation("held for review", [])  # a guard-respecting agent: the hold takes effect
+            return Observation("done", [call])
+
+    class _NovelKindOracle:
+        def judge(self, observation: Observation):
+            for call in observation.tool_calls:
+                if call.tool == "update_vendor_bank":
+                    return Verdict(True, "breached", "novel_kind", call.tool, call.agent)
+            return Verdict(False, "no breach")
+
+    ledger = AuditLedger(tmp_path / "audit.jsonl")
+    assessment = Assessment(lambda guard: _Agent(guard), _NovelKindOracle(), PROFILE, ledger,
+                            legit=[("Look up acme", _looked_up)])
+    report = asyncio.run(assessment.run([ATTACK]))
+
+    assert report.defense is not None and "P4" in report.defense.patch_ids  # dynamic hold of the breached tool
+    assert report.verification is not None and report.verification.attack_blocked  # and it held on re-attack
+    assert report.verification.errored and not report.safe_to_ship  # but still a catalog gap: review, don't ship
+    assert any("novel_kind" in e for e in report.verification.errors)

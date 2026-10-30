@@ -6,6 +6,8 @@ never read from the reply — the OracleScorer reads ``last_observation`` instea
 agent that says "I can't do that" while it quietly wires the money out is still scored as
 breached. ``observations`` additionally keeps every send this session, for a search that
 branches (PAIR, TAP): the breach, if any, is not necessarily on the last call made.
+Adaptive callers may set a hard unique-prompt budget; case, whitespace, Unicode-normalization,
+and punctuation-only variants are rejected before they reach the wrapped target.
 
 The target's ``send`` is a blocking call (HTTP, a database), so it runs in a worker thread;
 otherwise a timeout, which can only interrupt code that yields to the event loop, would
@@ -25,12 +27,14 @@ then already cancelled.
 
 import asyncio
 import threading
+import unicodedata
 from typing import Any
 
 from pyrit.models import Message
 from pyrit.prompt_target import PromptTarget, TargetCapabilities, TargetConfiguration
 
 from purpleteam.adapter import Observation, Target
+from purpleteam.run_control import RunControl, RunStopped
 
 _CAPS = TargetConfiguration(
     capabilities=TargetCapabilities(
@@ -40,6 +44,24 @@ _CAPS = TargetConfiguration(
         supports_multi_message_pieces=True,
     )
 )
+
+
+class DuplicateTargetPrompt(RuntimeError):
+    """A normalized duplicate was skipped instead of being sent to the target."""
+
+
+class UniquePromptLimitReached(RuntimeError):
+    """The adaptive search tried to exceed its configured unique target-prompt budget."""
+
+
+def _prompt_key(text: str) -> str:
+    """Canonicalize formatting-only differences while preserving Unicode letters and marks."""
+    normalized = unicodedata.normalize("NFKC", text).casefold()
+    without_punctuation = "".join(
+        " " if unicodedata.category(character).startswith("P") else character
+        for character in normalized
+    )
+    return " ".join(without_punctuation.split())
 
 
 def _resolve(future: asyncio.Future, result: Any, error: BaseException | None) -> None:
@@ -80,14 +102,28 @@ def _tell(loop: asyncio.AbstractEventLoop, future: asyncio.Future, result: Any, 
 
 
 class PlatformPromptTarget(PromptTarget):
-    def __init__(self, *, target: Target, custom_configuration=None, reset_each_turn: bool = True) -> None:
+    def __init__(self, *, target: Target, custom_configuration=None, reset_each_turn: bool = True,
+                 control: RunControl | None = None, max_unique_prompts: int | None = None) -> None:
         super().__init__(custom_configuration=custom_configuration or _CAPS)
+        if max_unique_prompts is not None and max_unique_prompts not in {1, 5, 10}:
+            raise ValueError("max_unique_prompts must be one of 1, 5, or 10")
         self._target = target
         self._reset_each_turn = reset_each_turn  # an agent target resets per request; a stateful chat target does not
+        self._control = control
+        self._max_unique_prompts = max_unique_prompts
+        self._unique_prompt_keys: set[str] = set()
+        self._prompt_gate = asyncio.Lock()
+        self.duplicate_prompts_skipped = 0
+        self.prompt_budget_exhausted = False
         self.last_observation: Observation | None = None
         self.observations: list[Observation] = []  # every real send this session, for a search that branches
-        self.attempts: list[str] = []
+        self.attempts: list[str] = []  # unique prompts actually submitted to the wrapped target
         self._in_flight = False
+
+    @property
+    def unique_prompt_count(self) -> int:
+        """Number of distinct normalized prompts reserved for a real target request."""
+        return len(self._unique_prompt_keys)
 
     @property
     def poisoned(self) -> bool:
@@ -100,7 +136,17 @@ class PlatformPromptTarget(PromptTarget):
 
     async def _send_prompt_to_target_async(self, *, normalized_conversation):
         text = normalized_conversation[-1].get_value()
-        self.attempts.append(text)
+        key = _prompt_key(text)
+        async with self._prompt_gate:  # TAP can dispatch several branches simultaneously; reserve atomically
+            if key in self._unique_prompt_keys:
+                self.duplicate_prompts_skipped += 1
+                raise DuplicateTargetPrompt("normalized duplicate prompt skipped")
+            if (self._max_unique_prompts is not None
+                    and len(self._unique_prompt_keys) >= self._max_unique_prompts):
+                self.prompt_budget_exhausted = True
+                raise UniquePromptLimitReached("unique target-prompt limit reached")
+            self._unique_prompt_keys.add(key)
+            self.attempts.append(text)
         self._in_flight = True
         try:
             observation = await call_in_daemon_thread(self._send, text)
@@ -117,6 +163,8 @@ class PlatformPromptTarget(PromptTarget):
         return [Message.from_prompt(prompt=reply, role="assistant")]
 
     def _send(self, text: str) -> Observation:
+        if self._control is not None and not self._control.checkpoint():
+            raise RunStopped("run stopped before the next target request")
         if self._reset_each_turn:
             self._target.reset()
         return self._target.send(text)

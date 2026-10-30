@@ -11,7 +11,7 @@ from purpleteam.attack.outcome import INCONCLUSIVE
 from purpleteam.defender.selector import Defense, Finding
 from purpleteam.discovery import TargetProfile
 from purpleteam.explainer import Explanation
-from purpleteam.patches.catalog import FINDING_PATCHES
+from purpleteam.patches.catalog import FINDING_PATCHES, fallback_patches  # noqa: F401
 from purpleteam.verifier import VerifyReport
 
 
@@ -51,6 +51,8 @@ class AssessmentReport:
         (a scan that failed, code no scanner reads), the policy loosens an approved decision, or a finding
         was not proven defended: proving nothing, or on evidence that cannot be trusted, is not proving safety."""
         reasons = [] if self.results else ["no attack ran, so nothing was proven"]
+        if self.scope.get("stopped"):
+            reasons.append("the run was stopped before the assessment and verification completed")
         reasons += [f"attack {r.id} was inconclusive ({r.detail}): untested is not safe"
                     for r in self.results if r.outcome == INCONCLUSIVE]
         if not self.chain_ok:
@@ -117,7 +119,7 @@ def patch_scopes(findings: list[Finding], applied: list[str]) -> list[dict]:
     """Which agent/tool each applied runtime guard actually covers, for display: a guard is never
     described as covering more than the findings that caused it."""
     return [{"id": pid, "agent": f.agent, "tool": f.tool, "kind": f.kind}
-            for f in findings if f.tool for pid in FINDING_PATCHES.get(f.kind, []) if pid in applied]
+            for f in findings if f.tool for pid in fallback_patches(f.kind, bool(f.tool)) if pid in applied]
 
 
 IDENTITY_PATCHABLE = {"excess_privilege", "undeclared_agent", "unscoped_execution"}

@@ -19,13 +19,16 @@ necessarily on the final call) is judged by the same proof-based oracle every ot
 platform answers to, and classified honestly (breached / held with a confidence bound /
 inconclusive), exactly like ``attack.corpus``.
 
-Costs real adversarial-model calls, bounded by ``tree_width``/``tree_depth``/``branching_factor``,
-not unlimited — unlike the scripted-fake-LLM corpus tests, this is not meant for every CI run.
+Costs real adversarial-model calls. PAIR/TAP search shape is bounded by
+``tree_width``/``tree_depth``/``branching_factor``, and real target requests additionally have a
+hard cap on unique normalized prompts; unlike the scripted-fake-LLM corpus tests, this is not meant
+for every CI run.
 """
 
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 
 from pyrit.executor.attack import AttackAdversarialConfig, PAIRAttack, TAPAttack
 from pyrit.executor.attack.multi_turn.tree_of_attacks import TAPAttackScoringConfig
@@ -40,12 +43,18 @@ from purpleteam.attack.pyrit_target import PlatformPromptTarget
 from purpleteam.attack.runner import ATTACKER_SYSTEM_PROMPT, adversarial_target, run_campaign
 from purpleteam.attack.signals import scan_observation
 from purpleteam.oracle import Oracle
+from purpleteam.run_control import RunControl
 
 TECHNIQUES = {"pair": PAIRAttack, "tap": TAPAttack}
 CAMPAIGN_TECHNIQUES = {"redteam", "crescendo"}
 # FloatScaleThresholdScorer normalizes the bundled 1-10 tree-of-attacks scale to [0, 1]; 0.8 is a
 # near-top score. Only steers the search (which branches to keep exploring) — never the verdict.
 OBJECTIVE_THRESHOLD = 0.8
+
+
+def _calls(observation) -> tuple:
+    """(agent, tool) pairs the breaching attempt executed, for the per-question execution tree."""
+    return tuple({"agent": c.agent, "tool": c.tool} for c in observation.tool_calls) if observation else ()
 
 
 def _scoring_config(adversarial_model: str | None) -> TAPAttackScoringConfig:
@@ -68,15 +77,20 @@ async def run_adaptive(
     system_prompt: str = ATTACKER_SYSTEM_PROMPT,
     tree_width: int = 3,
     tree_depth: int = 3,
+    max_unique_prompts: int = 5,
     timeout: float | None = 300,
+    control: RunControl | None = None,
 ) -> CorpusResult:
     """Run a PyRIT Red Team, Crescendo, PAIR or TAP attack rather than replaying only fixed templates.
     ``objective`` names the specific thing to achieve (see ``attack.corpus.action_objective``).
     ``system_prompt`` defaults to the generic brief; pass ``runner.attacker_system_prompt(agent_info)``
-    to brief the adversarial model with the target's own real discovered instructions, when captured."""
+    to brief the adversarial model with the target's own real discovered instructions, when captured.
+    ``max_unique_prompts`` limits distinct target requests for PAIR/TAP; formatting-only variants are
+    deduplicated before they reach the target."""
     if technique in CAMPAIGN_TECHNIQUES:
         campaign = await run_campaign(target, objective=objective, strategy=technique, oracle=oracle,
-                                      system_prompt=system_prompt, timeout=timeout)
+                                      system_prompt=system_prompt, timeout=timeout, control=control,
+                                      adversarial_model=adversarial_model)
         pairs = list(zip(campaign.attempts, campaign.observations))
         trials = [classify(observation, oracle.judge(observation), timed_out=False, error=None)
                   for _, observation in pairs]
@@ -88,12 +102,19 @@ async def run_adaptive(
         else:
             payload, observation = pairs[-1] if pairs else (objective, None)
             signals = []
+        if control is not None and control.stop_requested and summary.outcome != BREACHED:
+            summary = replace(summary, outcome=INCONCLUSIVE,
+                              detail="the adaptive campaign was stopped before it completed", upper_bound=1.0)
         return as_corpus_result(attack_id or technique, technique.upper(), summary, payload, signals,
-                                reply=observation.reply if observation else "")
+                                reply=observation.reply if observation else "",
+                                agent_replies=observation.agent_replies if observation else [],
+                                calls=_calls(observation))
     if technique not in TECHNIQUES:
         raise ValueError(f"unknown technique {technique!r}; choose from {', '.join(sorted(TECHNIQUES | CAMPAIGN_TECHNIQUES))}")
+    if max_unique_prompts not in {1, 5, 10}:
+        raise ValueError("max_unique_prompts must be one of 1, 5, or 10")
     await initialize_pyrit_async(IN_MEMORY, silent=True)
-    pyrit_target = PlatformPromptTarget(target=target)
+    pyrit_target = PlatformPromptTarget(target=target, control=control, max_unique_prompts=max_unique_prompts)
     kwargs = {"branching_factor": 2} if technique == "tap" else {}
     attack = TECHNIQUES[technique](
         objective_target=pyrit_target,
@@ -109,7 +130,17 @@ async def run_adaptive(
     except Exception:  # a timeout or a mid-search failure: whatever branches completed is still real evidence
         pass
 
-    return await classify_search(pyrit_target, oracle, attack_id or technique, technique.upper(), objective)
+    result = await classify_search(pyrit_target, oracle, attack_id or technique, technique.upper(), objective)
+    duplicate_note = (f"; {pyrit_target.duplicate_prompts_skipped} normalized duplicate prompt(s) skipped"
+                      if pyrit_target.duplicate_prompts_skipped else "")
+    budget_note = "; prompt budget reached" if pyrit_target.prompt_budget_exhausted else ""
+    result.detail = (f"{result.detail}; {pyrit_target.unique_prompt_count}/{max_unique_prompts} unique target "
+                     f"prompt(s) submitted{duplicate_note}{budget_note}")
+    if control is not None and control.stop_requested and not result.breached:
+        result.outcome = INCONCLUSIVE
+        result.detail = "the adaptive search was stopped before it completed"
+        result.upper_bound = 1.0
+    return result
 
 
 async def classify_search(pyrit_target: PlatformPromptTarget, oracle: Oracle, attack_id: str, technique: str,
@@ -130,7 +161,9 @@ async def classify_search(pyrit_target: PlatformPromptTarget, oracle: Oracle, at
         payload, observation = pairs[-1] if pairs else (objective, None)
         signals = []
     return as_corpus_result(attack_id, technique, summary, payload, signals,
-                            reply=observation.reply if observation else "")
+                            reply=observation.reply if observation else "",
+                            agent_replies=observation.agent_replies if observation else [],
+                            calls=_calls(observation))
 
 
 async def _main() -> None:

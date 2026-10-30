@@ -59,8 +59,10 @@ def _send_all(observations: list[Observation]) -> PlatformPromptTarget:
     wrapper = PlatformPromptTarget(target=_SequencedTarget(observations))
 
     async def go() -> None:
-        for _ in observations:
-            await wrapper._send_prompt_to_target_async(normalized_conversation=[_Piece("hello")])
+        # Each turn is a distinct prompt, as a real campaign sends -- identical prompts are now deduplicated
+        # (max_unique_prompts), which would otherwise skip every turn after the first.
+        for i in range(len(observations)):
+            await wrapper._send_prompt_to_target_async(normalized_conversation=[_Piece(f"hello {i}")])
     asyncio.run(go())
     return wrapper
 

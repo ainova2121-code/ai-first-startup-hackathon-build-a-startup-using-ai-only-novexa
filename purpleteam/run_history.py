@@ -5,7 +5,8 @@ One directory per run: ``audit.jsonl`` (the signed ledger), ``events.jsonl`` (wh
 in order), ``trust.json`` (the public keys and signed checkpoint the run sealed with -- without it a
 later reader could check only internal consistency, not who signed), ``meta.json``, and -- once a
 defense was verified -- ``decisions.json`` (every verified decision, pinned by a digest in the ledger)
-and ``policy.json`` (the inputs that rebuild that exact defense).
+and ``policy.json`` (the inputs that rebuild that exact defense). The live demo also saves a read-only snapshot
+of the isolated LedgerPilot SQLite target as ``database.json`` so the Database view can reopen that run's state.
 """
 
 from __future__ import annotations

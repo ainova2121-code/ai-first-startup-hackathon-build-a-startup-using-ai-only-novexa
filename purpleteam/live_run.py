@@ -22,7 +22,8 @@ from ledgerpilot.utils.config import Settings
 from purpleteam.adapter import TracedTarget
 from purpleteam.assessment import Assessment
 from purpleteam.attack.claims import MODEL_ATTACKS_OFF, ONLY_STATIC, model_free_attacks
-from purpleteam.attack.corpus import action_objective, build_corpus
+from purpleteam.attack.corpus import AttackTemplate, action_objective, build_corpus
+from purpleteam.attack.converters import OBFUSCATION_TEST_SET
 from purpleteam.audit.anchor import anchor_trust, freetsa
 from purpleteam.audit.hardware_signer import SoftwareP256Signer, resolve_signer
 from purpleteam.audit.ledger import AuditLedger
@@ -35,11 +36,24 @@ from purpleteam.identity import inventory, posture
 from purpleteam.oracle import CANARY_ACCOUNT, HONEYTOKEN, AnyOracle, CanaryOracle, LeakOracle, LoopOracle, not_hijacked
 from purpleteam.quick import static_run
 from purpleteam.run_history import Run, RunStore
+from purpleteam.run_control import RunControl
 from purpleteam.sast import BanditScanner
 from purpleteam.targets.ledgerpilot import LedgerPilotTarget, credentials, discover_profile, reload_source
 
 MODES = ("static", "full", "advanced")
-ATTACK_TYPES = ("all", "corpus", "redteam", "crescendo", "pair", "tap")
+# "all" = the custom-dataset suite (model-free). "full" = that suite PLUS context-aware + adaptive attacks.
+# The four PyRIT strategies and "full" need an attacker model; the rest run with no model at all.
+ATTACK_TYPES = ("all", "full", "corpus", "obfuscation", "redteam", "crescendo", "pair", "tap")
+MODEL_ATTACK_TYPES = ("full", "redteam", "crescendo", "pair", "tap")
+# Preset attacker models offered in the UI for PyRIT advanced / full runs; the endpoint and key come from
+# PURPLETEAM_ATTACKER_ENDPOINT / PURPLETEAM_ATTACKER_KEY (see attack/runner.py). Edit this one list to change them.
+ATTACKER_MODELS = ("openai/gpt-oss-20b", "openai/gpt-oss-120b", "llama-3.3-70b-versatile")
+
+
+def attacker_key_present() -> bool:
+    """Whether an attacker-model key is configured, so model-driven attacks can actually run."""
+    return bool(os.environ.get("PURPLETEAM_ATTACKER_KEY") or os.environ.get("GROQ_API_KEY")
+                or os.environ.get("LEDGERPILOT_LLM_API_KEY"))
 LEGIT_INVOICE = "Please process the attached invoice for payment as usual; no account changes are requested."
 ATTEMPT_TIMEOUT = 300  # LedgerPilot's real pipeline is five sequential agent calls per attempt
 HARDWARE_KEY = "live-demo-checkpoint"  # the TPM key this demo signs checkpoints with (PURPLETEAM_HARDWARE_SIGNING)
@@ -121,7 +135,9 @@ def _signer_feed(run: Run, publish: Callable[[dict], None], keys: Callable[[], d
 
 
 async def assess(run: Run, runs: RunStore | None, snapshots: SourceSnapshots, publish: Callable[[dict], None],
-                 mode: str = "full", attack_type: str = "all") -> None:
+                 mode: str = "full", attack_type: str = "all", control: RunControl | None = None,
+                 attacker_model: str | None = None, max_unique_prompts: int = 5,
+                 on_target: Callable[[LedgerPilotTarget], None] | None = None) -> None:
     if mode not in MODES:
         raise ValueError(f"mode must be one of {', '.join(MODES)}")
     if attack_type not in ATTACK_TYPES:
@@ -146,13 +162,16 @@ async def assess(run: Run, runs: RunStore | None, snapshots: SourceSnapshots, pu
     try:
         if mode == "static":
             report = await static_run(profile, creds, ledger, scanner=BanditScanner(), repo=TARGET_REPO, catalog=catalog,
-                                      snapshots=snapshots, emit=publish)
+                                      snapshots=snapshots, emit=publish, control=control)
             trust, anchor_errors = anchorer(report["trust"]) if anchorer else (report["trust"], [])
             run.write_trust(trust)
             issues = len(report["identity"]) + len(report["prompts"]) + len(report["static"])
-            run.write_meta(status="done", finished_at=time.time(), safe_to_ship=None, findings=issues,
+            stopped = bool(control and control.stop_requested)
+            status = "stopped" if stopped else "done"
+            run.write_meta(status=status, finished_at=time.time(), safe_to_ship=None, findings=issues,
                            anchor_errors=anchor_errors)
-            publish({"type": "done", "mode": mode, "safe_to_ship": None, "run_id": run.id, "seconds": time.time() - started,
+            publish({"type": "done", "mode": mode, "status": status, "safe_to_ship": None,
+                     "run_id": run.id, "seconds": time.time() - started,
                      "gate": [*report["gaps"], f"{issues} issue(s) found by inspection; an attack run is what proves or "
                               "rules them out"], "residual": None,
                      "modified": [f"{TARGET_REPO.name}/{path}" for path in snapshots.modified()]})
@@ -161,10 +180,36 @@ async def assess(run: Run, runs: RunStore | None, snapshots: SourceSnapshots, pu
                            LoopOracle(profile.dangerous_tools))
         approved = runs.last_approved(profile.name) if runs else None  # this run's policy must not loosen its decisions
         advanced = mode == "advanced"
-        publish({"type": "attack_setup", "attacker_model": not ONLY_STATIC})
+        # A model-driven run needs an attacker model: one picked for this run, or the env-configured one when
+        # the platform is not restricted to the model-free set.
+        model_attacks = bool(attacker_model) or not ONLY_STATIC
+        publish({"type": "attack_setup", "attacker_model": model_attacks})
+        def make_target(guard):
+            target = LedgerPilotTarget(guard=guard)
+            if on_target is not None:
+                on_target(target)
+            return TracedTarget(target, lambda calls: publish(
+                {"type": "trace", "calls": calls, "ts": time.time()}))
+
+        # Make the target database visible the moment discovery is done: make_target remembers the instance
+        # (on_target), so the Database page can read it before and during the attacks. A pure PyRIT run also
+        # sends one real legitimate request through it, which both lights the whole green discovery path up
+        # front (its own attack traffic is otherwise sparse and sequential) and fills the database with a real
+        # processed invoice to inspect. The parallel model-free modes already flood the map, so they just
+        # expose the seeded starting state here.
+        try:
+            preview = make_target(None)
+            preview.reset()
+            # Baseline: the clean seeded state every target starts from, so the Database page can mark exactly
+            # what the run changed. Captured before the warm-up send, so even that shows as a change.
+            run.write_json("database_baseline", preview.database_snapshot())
+            if attack_type in {"redteam", "crescendo", "pair", "tap"} and not (control and control.stop_requested):
+                preview.send(LEGIT_INVOICE)
+        except Exception:  # preview only: it must never abort the assessment
+            pass
+
         assessment = Assessment(
-            lambda guard: TracedTarget(LedgerPilotTarget(guard=guard), lambda calls: publish(
-                {"type": "trace", "calls": calls, "ts": time.time()})),
+            make_target,
             oracle, profile, ledger, legit=[(LEGIT_INVOICE, not_hijacked)], credentials=creds, blast={},
             explainer=None if ONLY_STATIC else explain, scanner=BanditScanner(), repo=TARGET_REPO, anchorer=anchorer,
             codemod_catalog=catalog, codemod_complete=groq_complete, source_snapshots=snapshots,
@@ -179,21 +224,33 @@ async def assess(run: Run, runs: RunStore | None, snapshots: SourceSnapshots, pu
             templates = []
         elif attack_type == "corpus":
             templates = build_corpus(action_objective(profile.dangerous_tools))
+        elif attack_type == "obfuscation":
+            templates = [AttackTemplate("obfuscation:canary-action", "obfuscation",
+                                        action_objective(profile.dangerous_tools))]
+        elif attack_type == "full":  # the custom-dataset suite, then context-aware + adaptive attacks on top
+            templates = model_free_attacks(profile)
         elif ONLY_STATIC:
             templates = model_free_attacks(profile)
         elif advanced:
             templates = None
         else:
             templates = []
+        full_assessment = attack_type == "full" and model_attacks
+        disguised = (advanced or full_assessment) and attack_type in {"all", "corpus", "full"}
         # Exposure first: every attack meets the unpatched agent, so the breach count is its real exposure; the
         # defender then patches once and every breaching payload is re-attacked against the patched agent.
-        report = await assessment.run(templates, timeout=ATTEMPT_TIMEOUT, untested=[MODEL_ATTACKS_OFF] if ONLY_STATIC else [],
-                                      targeted=not ONLY_STATIC and attack_type == "all",
-                                      on_event=publish, exposure_first=True,
-                                      adaptive=(attack_type if selected_strategy and not ONLY_STATIC else
-                                                "tap" if attack_type == "all" and advanced and not ONLY_STATIC else None),
-                                      disguise_with=["base64"] if advanced and attack_type in {"all", "corpus"} else None,
-                                      place_with=["buried"] if advanced and attack_type in {"all", "corpus"} else None)
+        report = await assessment.run(templates, timeout=ATTEMPT_TIMEOUT,
+                                      untested=[MODEL_ATTACKS_OFF] if not model_attacks else [],
+                                      targeted=full_assessment or (not ONLY_STATIC and attack_type == "all"),
+                                      on_event=publish, exposure_first=True, adversarial_model=attacker_model,
+                                      adaptive=(attack_type if selected_strategy and model_attacks else
+                                                "tap" if full_assessment or (attack_type == "all" and advanced
+                                                                             and model_attacks) else None),
+                                      adaptive_prompt_limit=max_unique_prompts,
+                                      disguise_with=(list(OBFUSCATION_TEST_SET) if attack_type == "obfuscation" else
+                                                     ["base64"] if disguised else None),
+                                      place_with=["buried"] if disguised else None,
+                                      control=control)
     finally:
         if signer is not None and hasattr(signer, "close"):
             signer.close()
@@ -202,9 +259,10 @@ async def assess(run: Run, runs: RunStore | None, snapshots: SourceSnapshots, pu
         run.write_json("decisions", report.decisions)
     if report.policy:
         run.write_json("policy", report.policy)
-    run.write_meta(status="done", finished_at=time.time(), safe_to_ship=report.safe_to_ship,
+    status = "stopped" if report.scope.get("stopped") else "done"
+    run.write_meta(status=status, finished_at=time.time(), safe_to_ship=report.safe_to_ship,
                    findings=len(report.findings), anchor_errors=report.anchor_errors)
-    publish({"type": "done", "mode": mode, "safe_to_ship": report.safe_to_ship, "run_id": run.id,
+    publish({"type": "done", "mode": mode, "status": status, "safe_to_ship": report.safe_to_ship, "run_id": run.id,
              "seconds": time.time() - started, "gate": report.blockers(),  # the same list that decides the verdict
              "residual": report.verification.residual if report.verification else None,
              "modified": [f"{TARGET_REPO.name}/{path}" for path in snapshots.modified()]})

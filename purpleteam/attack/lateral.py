@@ -202,7 +202,8 @@ async def run_lateral(target: Target, oracle: Oracle, agents: Iterable[AgentInfo
         summary = summarize([trial])
         observation = pyrit_target.last_observation
         result = as_corpus_result(result_id, technique, summary, payload, [],
-                                  reply=observation.reply if observation else "")
+                                  reply=observation.reply if observation else "",
+                                  agent_replies=observation.agent_replies if observation else [])
         if summary.outcome == BREACHED and observation:
             result.signals = tuple(await scan_observation(observation))
             if bypassed := _bypassed_stages(agents, observation):

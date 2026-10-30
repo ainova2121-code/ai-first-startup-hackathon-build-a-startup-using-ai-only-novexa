@@ -19,6 +19,7 @@ from purpleteam.discovery import TargetProfile
 from purpleteam.identity import posture
 from purpleteam.sast import ScanFailed, Scanner, unscanned_sources
 from purpleteam.source_fix import display, fix_sources
+from purpleteam.run_control import RunControl
 
 _ACTS_ON_CONTENT = re.compile(
     r"\b(use|pay|send|transfer|update|change|set|record|approve|schedule)\b[^.\n]{0,80}"
@@ -59,16 +60,29 @@ def prompt_findings(profile: TargetProfile) -> tuple[list[dict], list[str]]:
 
 async def static_run(profile: TargetProfile, creds: dict[str, str], ledger: Any, *, scanner: Scanner | None,
                      repo: Path | None, catalog: CodemodCatalog | None, snapshots: SourceSnapshots | None,
-                     emit: Callable[[dict], None] = lambda event: None) -> dict:
+                     emit: Callable[[dict], None] = lambda event: None,
+                     control: RunControl | None = None) -> dict:
     """Run every inspection; return the report (findings, fixes, gaps, the sealed root and trust bundle)."""
+    identity, prompts, gaps, static, fixed = [], [], [], [], []
+
+    def stopped_report() -> dict:
+        ledger.append("operator", "run_stopped", {"phase": "static_inspection"})
+        root = ledger.seal()
+        ledger.append("audit", "seal", {"merkle_root": root})
+        return {"identity": identity, "prompts": prompts, "static": static, "fixed": fixed,
+                "gaps": gaps, "sealed_root": root, "trust": ledger.export_trust(), "stopped": True}
+
+    if control is not None and not control.checkpoint():
+        return stopped_report()
     identity = [{"kind": f.kind, "agent": f.agent, "severity": f.severity, "detail": f.detail}
                 for f in posture(profile, None, creds)]
     ledger.append("identity", "identity", {"agents": len(profile.agents), "findings": identity})
+    if control is not None and not control.checkpoint():
+        return stopped_report()
     prompts, gaps = prompt_findings(profile)
     ledger.append("scanner", "prompt_rules", {"findings": [{k: f[k] for k in ("kind", "agent", "severity")} for f in prompts],
                                               "gaps": gaps})
     emit({"type": "prompt_findings", "findings": prompts, "gaps": gaps})
-    static, fixed = [], []
     if scanner is not None and repo is not None:
         try:
             static = scanner.scan(repo)
@@ -84,12 +98,17 @@ async def static_run(profile: TargetProfile, creds: dict[str, str], ledger: Any,
         emit({"type": "static_scan", "gaps": gaps, "findings": [
             {"kind": f.kind, "file": display(repo, f.file), "line": f.line, "severity": f.severity, "detail": f.detail,
              "blocking": f.blocking} for f in static]})
+        if control is not None and not control.checkpoint():
+            return stopped_report()
         if static and catalog is not None:  # only fixes approved before: no model is called in a static run
             result = await fix_sources(static, repo, scanner, catalog, complete=None, snapshots=snapshots,
                                        ledger=ledger, emit=emit)
             fixed = result.changes
             static = [f for f in static if (f.kind, f.file, f.line) not in result.resolved]
+    stopped = bool(control and control.stop_requested)
+    if stopped:
+        ledger.append("operator", "run_stopped", {"phase": "static_inspection"})
     root = ledger.seal()
     ledger.append("audit", "seal", {"merkle_root": root})
     return {"identity": identity, "prompts": prompts, "static": static, "fixed": fixed, "gaps": gaps,
-            "sealed_root": root, "trust": ledger.export_trust()}
+            "sealed_root": root, "trust": ledger.export_trust(), "stopped": stopped}

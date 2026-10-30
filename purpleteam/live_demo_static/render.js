@@ -32,6 +32,7 @@ function normPath(path) { return String(path || "").replaceAll("\\", "/"); }
 // -- discovery ------------------------------------------------------------------------------------
 
 function renderDiscovery(e) {
+  window.TOPOLOGY = { agents: e.agents || [], dangerous: new Set(e.dangerous_tools || []) };  // for the per-attack tree
   $("discoveryEmpty").classList.add("hidden");
   const chip = $("targetChip");
   chip.textContent = "";
@@ -76,10 +77,11 @@ function defenseCard(title, tagText, tagCls, note, box = $("defense")) {
 
 function renderRuntimeGuards(e) {
   const escalated = e.escalation > 0;
+  const sourceChanges = e.source_changes || [];
   const card = defenseCard(escalated ? `Escalated defense — level ${e.escalation}` : "Runtime guards attached",
                            "no file changed", escalated ? "risk-delete" : "risk-external",
                            escalated ? `The previous defense still let a replay through, so the defender tightened: ${e.escalation_note}.`
-                                     : "Attached to the agent through its Guard port. The agent's source files are untouched.");
+                                     : "Attached to the agent through its Guard port before reverification. No target source file was changed.");
   const scopes = e.scopes || [];
   const seen = new Set();
   for (const patch of e.patches) {
@@ -93,6 +95,32 @@ function renderRuntimeGuards(e) {
   if (!e.patches.length) card.appendChild(el("div", "card-note", "No runtime guard applies to these findings."));
   for (const gap of e.source_gaps || []) add(card, el("div", "card-note", `Unresolved: ${gap}`));
   for (const note of e.advisories || []) add(card, el("div", "card-note", `Advisory (does not block): ${note}`));
+  // If the assessment also made a verified source edit, keep that real file diff in view as
+  // reverification starts. Runtime-only guards have no target-file diff to display.
+  const patchedFile = sourceChanges.map((change) => liveSourcePatchCards.get(change.path)).find((node) => node?.isConnected);
+  if (patchedFile) requestAnimationFrame(() => revealDefenseCard(patchedFile));
+}
+
+function renderSourceBaseline(e) {
+  const restored = e.restored || [], adopted = e.adopted || [];
+  const title = adopted.length ? "Your edited target source is the baseline"
+              : restored.length ? "Original target source restored" : "Target source reloaded";
+  const detail = adopted.length
+      ? "Files you hand-edited were adopted as this run's baseline — discovery and the attack phase use exactly those edited contents."
+      : restored.length
+      ? "Previous platform-applied source edits were restored before this run. The initial attack starts against those original file contents."
+      : "No previous platform source edits needed restoration. The current target source was reloaded from disk before this run.";
+  const card = defenseCard(title, adopted.length ? "edits adopted" : restored.length ? "baseline reset" : "baseline ready",
+                           "risk-read", detail);
+  for (const path of restored) add(card, add(el("div", "guard"), el("span", "mono", path), el("span", "faint", "restored")));
+  for (const path of adopted) add(card, add(el("div", "guard"), el("span", "mono", path), el("span", "faint", "your edit · adopted")));
+}
+
+const liveSourcePatchCards = new Map();
+function revealDefenseCard(card) {
+  const box = $("defense");
+  const top = card.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop;
+  box.scrollTo({ top: Math.max(0, top - 8), behavior: "smooth" });
 }
 
 function fmtDuration(seconds) {
@@ -136,7 +164,8 @@ function settleFix(e) {
 
 function renderSourcePatch(e) {
   settleFix(e);
-  fileCard(e, $("defense"), true);       // open on the live timeline: the edit is shown before the re-attack
+  const liveCard = fileCard(e, $("defense"), true);  // show the real edit before the re-attack
+  liveSourcePatchCards.set(e.path, liveCard);
   fileCard(e, $("filesList"), false);    // one click to open on its own page
   $("filesEmpty").classList.add("hidden");
   const count = $("filesCount");
@@ -146,7 +175,7 @@ function renderSourcePatch(e) {
 }
 
 function fileCard(e, box, open) {
-  const card = defenseCard(`File modified: ${e.path}`, "real edit on disk", "risk-delete",
+  const card = defenseCard(`Source patch before reverification: ${e.path}`, "real edit on disk", "risk-delete",
                            `${e.kind} at line ${e.line} · ${e.approval}. Verified by: ${e.verified_by.join(" + ")}. `
                            + `sha256 ${e.sha256.slice(0, 16)}…`, box);
   const lines = e.content.replace(/\r\n/g, "\n").replace(/\n$/, "").split("\n");
@@ -186,6 +215,7 @@ function fileCard(e, box, open) {
     toggle.setAttribute("aria-expanded", String(opening));
     if (opening) requestAnimationFrame(scrollToChange);
   });
+  return card;
 }
 
 function renderSourceSkipped(e) {
@@ -196,8 +226,10 @@ function renderSourceSkipped(e) {
 }
 
 function renderReloaded(e) {
-  defenseCard("Agent reloaded from the edited files", "re-attacking edited code", "risk-read",
-              `Re-imported from disk: ${e.files.join(", ")}. Every replay below runs the edited code.`);
+  const patchedFile = (e.files || []).map((path) => liveSourcePatchCards.get(path)).find((node) => node?.isConnected);
+  const note = `Re-imported from disk before reverification: ${(e.files || []).join(", ")}. The replay runs the edited code.`;
+  if (patchedFile) patchedFile.appendChild(el("div", "card-note", note));
+  else defenseCard("Agent reloaded from the edited files", "re-attacking edited code", "risk-read", note);
 }
 
 // -- verdict --------------------------------------------------------------------------------------
@@ -206,7 +238,9 @@ function renderVerdict(e, sealed) {
   $("verdictPanel").classList.remove("hidden");
   const head = $("verdictHead");
   head.textContent = "";
-  if (e.mode === "static") {  // inspection proves nothing either way: never a ship / no-ship badge
+  if (e.status === "stopped") {
+    add(head, el("span", "verdict-badge warn", "Stopped · incomplete assessment"));
+  } else if (e.mode === "static") {  // inspection proves nothing either way: never a ship / no-ship badge
     add(head, el("span", "verdict-badge warn", "Static scan · not a release verdict"));
   } else {
     add(head, el("span", `verdict-badge ${e.safe_to_ship ? "ok" : "bad"}`, e.safe_to_ship ? "Safe to ship" : "Not safe to ship"));

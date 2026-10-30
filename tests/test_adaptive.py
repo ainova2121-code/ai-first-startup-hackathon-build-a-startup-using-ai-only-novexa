@@ -110,7 +110,8 @@ def test_existing_redteam_and_crescendo_campaigns_use_the_same_proof_oracle(monk
     from purpleteam.attack import adaptive
     from purpleteam.attack.runner import CampaignResult
 
-    async def fake_campaign(target, *, objective, strategy, oracle, system_prompt, timeout):
+    async def fake_campaign(target, *, objective, strategy, oracle, system_prompt, timeout, control=None,
+                            adversarial_model=None):
         return CampaignResult(objective, strategy, False, "no canary observed", "held",
                               attempts=["attempt"], observations=[_held()])
 

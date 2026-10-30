@@ -2,10 +2,10 @@
 
 One shared code (``DEMO_ACCESS_CODE``), compared in constant time. The right code earns an HttpOnly,
 SameSite=Strict session cookie (Secure over HTTPS), signed with a key that lives only in this process, so a
-restart signs everyone out. Every route except the login page needs that cookie: an API call without it gets
-401, a page gets sent to the login. Wrong codes are counted per client address (the real one when a local TLS
-proxy forwards it), and too many in a window lock only that client out, so no one can lock out everyone else.
-The page echoes nothing a visitor typed.
+restart signs everyone out. Routes need that cookie except for login and the fixed, synthetic attack-corpus
+JSON endpoint, which is intentionally public. Wrong codes are counted per client address (the real one when a
+local TLS proxy forwards it), and too many in a window lock only that client out, so no one can lock out everyone
+else. The page echoes nothing a visitor typed.
 """
 
 from __future__ import annotations
@@ -66,7 +66,8 @@ def install_login(app: FastAPI, access_code: SecretStr) -> None:
 
     @app.middleware("http")
     async def require_session(request: Request, call_next) -> Response:
-        if request.url.path == "/login" or valid(request.cookies.get(COOKIE)):
+        public_dataset = request.method == "GET" and request.url.path == "/custom-dataset.json"
+        if request.url.path == "/login" or public_dataset or valid(request.cookies.get(COOKIE)):
             response = await call_next(request)
         elif request.method == "GET" and request.url.path == "/":
             response = RedirectResponse("/login", 303)

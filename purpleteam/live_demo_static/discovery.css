@@ -12,7 +12,7 @@
 .dm-stage { position: relative; border: 1px solid var(--border); border-radius: 14px; min-width: 0; overflow: hidden;
   background: radial-gradient(circle at 1px 1px, rgba(255,255,255,.05) 1px, transparent 0) 0 0 / 28px 28px, var(--panel); }
 .dm-empty { position: absolute; top: 18px; left: 20px; }
-.dm-scroll { overflow-x: auto; min-height: 420px; }
+.dm-scroll { overflow-x: auto; overflow-y: hidden; min-height: 420px; }
 .dm-canvas { position: relative; min-width: 100%; }
 .dm-links { position: absolute; inset: 0; overflow: visible; pointer-events: none; }
 .dm-link { fill: none; stroke: var(--sage); stroke-width: 2; stroke-dasharray: 7 5; animation: dm-flow 1.2s linear infinite;

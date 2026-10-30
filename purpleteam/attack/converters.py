@@ -123,6 +123,10 @@ DISGUISES: dict[str, Disguise] = {
     )
 }
 
+# A bounded five-case obfuscation suite for the live demo. The remaining registered converters
+# stay available to custom assessments without multiplying every default run's model calls.
+OBFUSCATION_TEST_SET = ("base64", "rot13", "leetspeak", "confusable", "ascii_smuggler")
+
 
 async def disguise(text: str, name: str) -> str:
     """``text`` through the named converter (see ``DISGUISES``), with its preamble prepended."""

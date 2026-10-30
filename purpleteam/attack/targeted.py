@@ -40,6 +40,7 @@ from purpleteam.attack.signals import scan_observation
 from purpleteam.concurrency import parallel_map
 from purpleteam.discovery import AgentInfo
 from purpleteam.oracle import CANARY_ACCOUNT, Oracle
+from purpleteam.run_control import RunControl
 
 _RECON_SYSTEM = (
     "You read one AI agent's real system prompt and look for a literal rule in it: an action the "
@@ -162,7 +163,8 @@ async def run_targeted(target: Target, oracle: Oracle, agents: Iterable[AgentInf
                        canary: str = CANARY_ACCOUNT, timeout: float | None = 120,
                        on_start: Callable[[str, str], None] | None = None,
                        on_result: Callable[[CorpusResult, float], None] | None = None,
-                       payloads: dict[str, str | None] | None = None) -> list[CorpusResult]:
+                       payloads: dict[str, str | None] | None = None,
+                       control: RunControl | None = None) -> list[CorpusResult]:
     """Recon every agent with a captured prompt for a real trigger condition, craft a natural
     payload for each one found, and send it: the targeted alternative to replaying the fixed
     corpus's generic, self-describing objective (see module docstring). Agents with no prompt
@@ -174,13 +176,15 @@ async def run_targeted(target: Target, oracle: Oracle, agents: Iterable[AgentInf
     seconds)`` right after it resolves. Neither fires for an agent recon skipped. Both default to
     ``None`` so an ordinary caller sees no difference at all."""
     await initialize_pyrit_async(IN_MEMORY, silent=True)
-    pyrit_target = PlatformPromptTarget(target=target)
+    pyrit_target = PlatformPromptTarget(target=target, control=control)
     attack = PromptSendingAttack(
         objective_target=pyrit_target,
         attack_scoring_config=AttackScoringConfig(objective_scorer=OracleScorer(target=pyrit_target, oracle=oracle)),
     )
     results: list[CorpusResult] = []
     for agent in agents:
+        if control is not None and not control.checkpoint():
+            break
         if payloads is not None:  # prepared in advance by prepare_payloads
             payload = payloads.get(agent.name)
         else:
@@ -197,8 +201,11 @@ async def run_targeted(target: Target, oracle: Oracle, agents: Iterable[AgentInf
         observation = pyrit_target.last_observation
         signals = await scan_observation(observation) if summary.outcome == BREACHED and observation else []
         result = as_corpus_result(result_id, "trigger-condition", summary, payload, signals,
-                                  reply=observation.reply if observation else "")
+                                  reply=observation.reply if observation else "",
+                                  agent_replies=observation.agent_replies if observation else [])
         results.append(result)
         if on_result:
             on_result(result, time.monotonic() - started)
+        if control is not None and control.stop_requested:
+            break
     return results

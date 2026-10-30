@@ -18,7 +18,8 @@ from purpleteam.discovery import TargetProfile
 from purpleteam.identity import PermissionManifest
 from purpleteam.oversight import HumanReviewGate, ReviewQueue
 from purpleteam.patches.base import CompositeGuard, Patch
-from purpleteam.patches.catalog import FINDING_PATCHES, GLOBAL_PATCHES, PATCH_SUMMARY
+from purpleteam.patches.catalog import FINDING_PATCHES, GLOBAL_PATCHES, PATCH_SUMMARY, fallback_patches
+from purpleteam.patches.prompt_hardening import PromptHardeningGuard
 from purpleteam.patches.provenance import ProvenanceGuard
 from purpleteam.patches.rules import (
     AgentScopeGuard, ArgumentAllowlist, EgressGuard, LoopGuard, MemoryWriteGuard, SqlFirewall)
@@ -83,7 +84,7 @@ class Defender:
         self._exclude = exclude  # patches a verified replay proved break legitimate work (see assessment)
 
     def select(self, finding: Finding) -> Defense:
-        ids = [pid for pid in FINDING_PATCHES.get(finding.kind, []) if pid not in self._exclude]
+        ids = [pid for pid in fallback_patches(finding.kind, bool(finding.tool)) if pid not in self._exclude]
         built = [(pid, self._build(pid, finding)) for pid in ids]
         patches = [patch for _, patch in built if patch is not None]
         applied = [{"id": pid, "hash": patch.code_hash(), "summary": PATCH_SUMMARY[pid]}
@@ -157,6 +158,8 @@ class Defender:
             return LoopGuard()
         if patch_id == "P14":
             return ProvenanceGuard(self._profile.outside_content_readers, self._profile.value_args)
+        if patch_id == "P15":
+            return PromptHardeningGuard()
         return None
 
     def _manifest(self) -> PermissionManifest:

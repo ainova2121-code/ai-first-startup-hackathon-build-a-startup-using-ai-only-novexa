@@ -290,7 +290,9 @@ function dmLayout(following) {
       const sx = back ? a.left + DM_W / 2 : a.left + DM_W, ex = back ? b.left + DM_W / 2 : b.left;
       d = `M${sx},${back ? DM_TOP : y} C${sx},${lift} ${ex},${lift} ${ex},${back ? DM_TOP : y}`;
     }
-    const edge = dmEdge(`link:${link.from}→${link.to}`, d, "dm-link", `observed · ${link.count} call${link.count === 1 ? "" : "s"}`);
+    // Short label: the full "observed · N calls" is wider than the gap between nodes and gets clipped by the
+    // boxes. The legend already explains the green edge means observed, so the visible label is just the count.
+    const edge = dmEdge(`link:${link.from}→${link.to}`, d, "dm-link", `${link.count} call${link.count === 1 ? "" : "s"}`);
     edge.path.setAttribute("marker-end", "url(#dm-arrow)");
     if (link.fresh && !following && !dmCalm) dmParticle(edge.path);
     if (!following) link.fresh = false;

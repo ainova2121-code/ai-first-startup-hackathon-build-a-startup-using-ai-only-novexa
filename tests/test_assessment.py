@@ -152,7 +152,7 @@ def test_adaptive_search_runs_alongside_the_default_corpus_and_the_scope_says_so
     path, so a caller never saw it unless it imported purpleteam.attack.adaptive directly."""
     seen = {}
 
-    async def fake_run_adaptive(target, oracle, objective, *, technique, system_prompt, timeout):
+    async def fake_run_adaptive(target, oracle, objective, *, technique, system_prompt, timeout, **kwargs):
         seen.update(technique=technique, timeout=timeout, objective=objective, system_prompt=system_prompt)
         return CorpusResult("tap", "TAP", True, "adaptive search found a working phrasing", outcome="breached")
 

@@ -61,6 +61,12 @@ class SourceSnapshots:
                 results.append({"path": relative, "status": "skipped", "reason": "outside the target repository"})
                 continue
             current = read_exact(path) if path.is_file() else None
+            if current is not None and _sha(current) == _sha(entry["original"]):
+                # Already the original (a prior patch was reverted outside the platform, e.g. by git): nothing to
+                # undo, so just forget it -- an orphaned snapshot must never block a run or read as a manual edit.
+                del entries[relative]
+                results.append({"path": relative, "status": "restored", "reason": "already at the original"})
+                continue
             if current is not None and _sha(current) != entry["written_sha256"]:
                 results.append({"path": relative, "status": "skipped",
                                 "reason": "edited since the platform patched it; left untouched"})
@@ -68,6 +74,28 @@ class SourceSnapshots:
             _write_atomic(path, entry["original"])
             del entries[relative]
             results.append({"path": relative, "status": "restored"})
+        self._save(entries)
+        return results
+
+    def rebaseline(self, repo: Path) -> list[dict]:
+        """Prepare the target baseline for a run. A file the platform patched that nothing has touched since is
+        put back to its original; a file the operator has since edited by hand is kept as-is and adopted as the
+        new baseline -- the operator changed the target, so the run attacks what they now have. All entries are
+        then forgotten. Unlike ``restore_all`` this never leaves a file 'skipped', so a hand edit never blocks a
+        run and the edited source is what every run discovers, attacks and shows."""
+        entries, results = self._load(), []
+        for relative, entry in sorted(entries.items()):
+            path = (repo / relative).resolve()
+            if not path.is_relative_to(repo.resolve()):
+                results.append({"path": relative, "status": "skipped", "reason": "outside the target repository"})
+                continue
+            current = read_exact(path) if path.is_file() else None
+            if current is None or _sha(current) == entry["written_sha256"]:
+                _write_atomic(path, entry["original"])  # the platform's own patch, untouched -> back to original
+                results.append({"path": relative, "status": "restored"})
+            else:
+                results.append({"path": relative, "status": "adopted"})  # the operator's own edit -> keep, baseline it
+            del entries[relative]
         self._save(entries)
         return results
 

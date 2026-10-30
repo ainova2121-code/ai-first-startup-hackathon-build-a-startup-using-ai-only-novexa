@@ -7,9 +7,78 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/app.css?v=43">
+<link rel="stylesheet" href="/static/app.css?v=47">
 <link rel="stylesheet" href="/static/ledger.css?v=43">
-<link rel="stylesheet" href="/static/discovery.css?v=43">
+<link rel="stylesheet" href="/static/discovery.css?v=44">
+<link rel="stylesheet" href="/static/database.css?v=2">
+<style>
+  /* A tab with no data yet is frozen until its data arrives (see updateTabGates in app.js). */
+  .tabs a.disabled { pointer-events: none; opacity: .38; }
+  .quick-scan { display: inline-flex; align-items: center; gap: 6px; }
+  .quick-scan input { margin: 0; }
+  .dataset-json-link { text-decoration: none; white-space: nowrap; }
+  /* Database page: mark in red what the run changed vs the seeded baseline (see database.js). */
+  #dbTableBody td.db-cell-changed { background: rgba(226,85,85,.14); }
+  #dbTableBody td.db-cell-changed .db-cell { color: #e25555; font-weight: 600; }
+  #dbTableBody tr.db-row-new td { background: rgba(226,85,85,.10); color: #e25555; }
+  #dbTableBody tr.db-row-new td .db-cell { color: #e25555; }
+  #dbTableBody tr.db-row-new td:first-child { box-shadow: inset 3px 0 #e25555; }
+  /* Attack console: full width, fixed-height scrolling feed, its own full-screen button. */
+  #attackPanel .panel-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+  #attackPanel #feed { height: 560px; max-height: none; }
+  #attackPanel:is(:fullscreen, .expanded) { background: var(--bg); padding: 20px 24px; }
+  #attackPanel:is(:fullscreen, .expanded) #feed { height: calc(100vh - 110px); }
+  /* Per-question agent execution tree, shown directly under the question inside an attack row (see feed.js). */
+  .xt { margin: 10px 0; border: 1px solid #243041; border-radius: 12px; padding: 16px; background: #0c0f16; }
+  .xt-legend { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+  .xt-cap { font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 2px; color: #4c93ec; }
+  .xt-keys { display: flex; gap: 16px; font-size: 12px; color: #8b98a9; }
+  .xt-key { display: inline-flex; align-items: center; }
+  .xt-dot { width: 9px; height: 9px; border-radius: 50%; background: #3a4557; margin-right: 6px; flex: 0 0 auto; }
+  .xt-dot.exec { background: #3fb96b; } .xt-dot.canary { background: #e25555; }
+  .xt-root { position: relative; display: flex; align-items: center; gap: 12px; border: 1px solid #27405e; background: #121a28; border-radius: 10px; padding: 12px 14px; margin-bottom: 20px; }
+  .xt-root.breach { border-color: #5a2b2f; }
+  .xt-root::after { content: ""; position: absolute; left: 50%; bottom: -20px; width: 2px; height: 20px; background: #2b5236; transform: translateX(-1px); }
+  .xt-q { width: 30px; height: 30px; border-radius: 8px; background: #1b2a44; color: #9cc2ff; display: flex; align-items: center; justify-content: center; font-weight: 700; flex: 0 0 auto; }
+  .xt-root-text { flex: 1; min-width: 0; }
+  .xt-root-title { font-weight: 600; color: #e6edf3; }
+  .xt-root-sub { font-size: 12px; color: #8b98a9; }
+  .xt-root-tag { font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 1px; color: #8b98a9; border: 1px solid #243041; border-radius: 20px; padding: 4px 10px; white-space: nowrap; }
+  .xt-root-tag.breach { color: #e25555; border-color: #5a2b2f; }
+  /* Horizontal pipeline: agents left-to-right, each branching down off a green bus under the question. */
+  .xt-scroll { overflow-x: auto; padding: 22px 6px 12px; scrollbar-width: none; -ms-overflow-style: none; }
+  .xt-scroll::-webkit-scrollbar { display: none; }  /* drag to pan instead of a visible bar */
+  .xt-agents { display: flex; gap: 20px; align-items: flex-start; width: max-content; min-width: 100%; position: relative; }
+  .xt-agents::before { content: ""; position: absolute; top: -22px; left: 105px; right: 105px; height: 2px; background: #2b5236; }
+  .xt-agent { position: relative; flex: 0 0 210px; }
+  .xt-agent::before { content: ""; position: absolute; top: -22px; left: 105px; width: 2px; height: 22px; background: #2b5236; transform: translateX(-1px); }
+  .xt-hub { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .xt-hub.xt-idle { opacity: .5; }
+  .xt-badge { width: 34px; height: 34px; border-radius: 50%; border: 2px solid #3fb96b; color: #3fb96b; display: flex; align-items: center; justify-content: center; font-family: 'IBM Plex Mono', monospace; font-size: 12px; flex: 0 0 auto; }
+  .xt-hub.xt-idle .xt-badge { border-color: #3a4557; color: #8b98a9; }
+  .xt-agent-name { font-weight: 600; color: #e6edf3; }
+  .xt-agent-sub { font-size: 11px; color: #8b98a9; font-family: 'IBM Plex Mono', monospace; letter-spacing: .4px; }
+  .xt-tools { display: flex; flex-direction: column; gap: 6px; margin-left: 17px; border-left: 1px solid #243041; padding-left: 12px; }
+  .xt-tool { display: flex; align-items: center; gap: 8px; border: 1px solid #243041; border-radius: 8px; padding: 6px 9px; font-size: 13px; color: #8b98a9; }
+  .xt-tool.xt-exec { border-color: #2b5236; color: #bfd8d5; }
+  .xt-tool.xt-canary { border-color: #5a2b2f; color: #f1b0b0; background: rgba(226,85,85,.10); }
+  .xt-ticon { font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: #8b98a9; border: 1px solid #2b3a4d; border-radius: 5px; padding: 2px 5px; flex: 0 0 auto; }
+  .xt-tname { flex: 1; }
+  .xt-check { color: #3fb96b; font-weight: 700; }
+  .xt-canary-tag { font-family: 'IBM Plex Mono', monospace; font-size: 9px; letter-spacing: 1px; color: #e25555; border: 1px solid #5a2b2f; border-radius: 4px; padding: 1px 5px; }
+  .xt-panels { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+  .xt-panel { border: 1px solid #243041; border-radius: 10px; padding: 12px 14px; min-width: 0; }
+  .xt-panel-h { font-weight: 600; color: #e6edf3; margin-bottom: 8px; }
+  .xt-why { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; font-size: 13px; margin: 0; }
+  .xt-why dt { color: #8b98a9; } .xt-why dd { margin: 0; color: #e6edf3; word-break: break-word; }
+  @media (max-width: 760px) { .xt-panels { grid-template-columns: 1fr; } }
+  /* Agent natural-language replies: two per row (see feed.js). */
+  .agent-replies-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 6px; }
+  .agent-reply-card { border: 1px solid #243041; border-radius: 8px; padding: 10px 12px; min-width: 0; }
+  .agent-reply-card .agent-reply-agent { font-weight: 600; color: #9cc2ff; margin-bottom: 4px; }
+  .agent-reply-card .reply { margin: 0; white-space: pre-wrap; }
+  @media (max-width: 680px) { .agent-replies-grid { grid-template-columns: 1fr; } }
+</style>
 </head>
 <body>
 <header class="topbar">
@@ -18,8 +87,11 @@
     <span id="targetChip" class="chip"><span class="dot"></span>target not yet discovered</span>
   </div>
   <nav class="tabs" aria-label="Pages">
-    <a href="#/run" data-route="run">Live run</a>
+    <a id="liveRunTab" href="#/run" data-route="run" aria-label="Live run">
+      <span id="liveRunStatus" class="run-tab-status hidden" aria-hidden="true"></span><span>Live run</span>
+    </a>
     <a href="#/discovery" data-route="discovery">Discovery</a>
+    <a href="#/database" data-route="database"><span class="db-nav-icon" aria-hidden="true">▦</span>Database</a>
     <a href="#/files" data-route="files">Patched files <span id="filesCount" class="count hidden"></span></a>
     <a href="#/drift" data-route="drift">Decision drift</a>
     <a href="#/ledger" data-route="ledger">Audit ledger</a>
@@ -31,21 +103,32 @@
     <button id="restoreBtn" class="btn" title="Put every file the platform edited back to its original bytes">
       Restore original files<span id="modifiedCount" class="count hidden"></span>
     </button>
-    <div class="mode-switch" role="group" aria-label="Run mode">
-      <button type="button" data-mode="static" aria-pressed="false" title="Seconds · inspection only: discovery, posture, source scan, prompt rules, catalog fixes. No attacks, no release verdict.">Static</button>
-      <button type="button" data-mode="full" aria-pressed="true" title="Minutes · claim attacks and PyRIT jailbreak / prompt-injection templates against the unpatched agent, patch, re-attack with the same payloads, verified source fixes, signed and anchored verdict.">Full</button>
-      <button type="button" data-mode="advanced" aria-pressed="false" title="Longest · full plus base64-disguised and document-buried variants of every attack, 5 verification trials.">Advanced</button>
-    </div>
-    <label class="faint" for="attackType">Attack type</label>
-    <select id="attackType" class="picker" aria-label="PyRIT attack type">
-      <option value="all">Full assessment</option>
-      <option value="corpus">PyRIT prompt corpus</option>
-      <option value="redteam">PyRIT Red Team</option>
-      <option value="crescendo">PyRIT Crescendo</option>
-      <option value="pair">PyRIT PAIR</option>
-      <option value="tap">PyRIT TAP</option>
+    <label class="faint" for="runSuite">Mode</label>
+    <select id="runSuite" class="picker" aria-label="Assessment mode">
+      <option value="custom">Custom dataset</option>
+      <option value="pyrit">PyRIT advanced attacks</option>
+      <option value="full">Full assessment</option>
     </select>
+    <select id="customSuite" class="picker" aria-label="Custom dataset suite">
+      <option value="all">Full dataset</option>
+      <option value="corpus">Jailbreak / injection seed corpus</option>
+      <option value="obfuscation">Obfuscation suite (5 variants + baseline)</option>
+    </select>
+    <a id="datasetJsonLink" class="btn dataset-json-link hidden" href="/custom-dataset.json" target="_blank" rel="noopener noreferrer">View full dataset JSON ↗</a>
+    <select id="pyritStrategy" class="picker hidden" aria-label="PyRIT strategy">
+      <option value="tap">PyRIT TAP</option>
+      <option value="pair">PyRIT PAIR</option>
+      <option value="crescendo">PyRIT Crescendo</option>
+      <option value="redteam">PyRIT Red Team</option>
+    </select>
+    <select id="attackerModel" class="picker hidden" aria-label="Attacker model"></select>
+    <label class="quick-scan" title="Seconds · inspection only: discovery, posture, source scan, prompt rules, catalog fixes. No attacks, no release verdict.">
+      <input type="checkbox" id="quickScan"> Quick scan (no attacks)
+    </label>
     <button id="startBtn" class="btn primary">Start run</button>
+    <button id="pauseBtn" class="btn" type="button" disabled title="Pause after the current request or attack step">Pause</button>
+    <button id="resumeBtn" class="btn" type="button" disabled title="Continue a paused run">Resume</button>
+    <button id="stopBtn" class="btn danger" type="button" disabled title="Stop this run; its partial evidence is kept and cannot be resumed">Stop</button>
   </div>
 </header>
 
@@ -58,26 +141,25 @@
   <section class="page" data-page="run">
     <div id="stepBar" class="steps"></div>
     <div id="discoverySummary" class="banner info hidden"></div>
-    <div class="columns">
-      <section class="panel">
-        <div class="panel-head">
-          <div>
-            <div class="panel-title">Attack console</div>
-            <div id="attackSub" class="panel-sub">every attack against the unpatched agent, grouped by type · not started</div>
-          </div>
+    <section class="panel" id="attackPanel" data-fullscreen>
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Attack console</div>
+          <div id="attackSub" class="panel-sub">every attack against the unpatched agent, grouped by type · not started</div>
         </div>
-        <div id="feed" class="feed"><div class="muted">Attacks appear here once discovery finishes.</div></div>
-      </section>
-      <section class="panel">
-        <div class="panel-head">
-          <div>
-            <div class="panel-title">Defense</div>
-            <div class="panel-sub">Runtime guards change no file. Only files the platform really edited are shown.</div>
-          </div>
+        <button type="button" class="expand-btn" title="Full screen" aria-label="Show the attack console full screen">⛶</button>
+      </div>
+      <div id="feed" class="feed"><div class="muted">Attacks appear here once discovery finishes.</div></div>
+    </section>
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <div class="panel-title">Defense</div>
+          <div class="panel-sub">Runtime guards change no file. Only files the platform really edited are shown.</div>
         </div>
-        <div id="defense" class="defense"><div class="muted">Nothing patched yet.</div></div>
-      </section>
-    </div>
+      </div>
+      <div id="defense" class="defense"><div class="muted">Nothing patched yet.</div></div>
+    </section>
     <section id="verdictPanel" class="panel hidden">
       <div class="panel-head"><div class="panel-title">Verdict</div></div>
       <div class="panel-body">
@@ -116,6 +198,41 @@
     </div>
     <div id="dmStats" class="dm-stats"></div>
     <div id="postureList" class="findings"></div>
+  </section>
+
+  <section class="page hidden" data-page="database">
+    <section class="panel database-panel">
+      <div class="database-hero">
+        <div class="database-hero-copy">
+          <div class="database-eyebrow"><span class="db-pulse"></span> TARGET DATA · READ ONLY</div>
+          <h1>LedgerPilot database</h1>
+          <p>Inspect the real SQLite records used by the demo agents. A clearly labeled seeded preview is shown until a run database is available.</p>
+        </div>
+        <div class="database-hero-actions">
+          <span id="dbConnectionState" class="db-connection"><span class="db-connection-dot"></span><span id="dbConnectionText">Waiting for a target run</span></span>
+          <button id="dbRefresh" class="btn" type="button" aria-label="Refresh database records">↻ Refresh</button>
+        </div>
+      </div>
+      <div id="dbOverview" class="db-overview"></div>
+      <div class="db-explainer">
+        <span class="db-info-mark" aria-hidden="true">i</span>
+        <span id="dbExplainerText">Demo data only. This view reads the assessment’s isolated target database; it is separate from the signed audit ledger. Binary invoice attachments are identified by size.</span>
+      </div>
+      <div class="db-toolbar">
+        <div id="dbTableTabs" class="db-table-tabs" role="tablist" aria-label="Database tables"></div>
+        <label class="db-search"><span aria-hidden="true">⌕</span><input id="dbSearch" type="search" placeholder="Search records…" aria-label="Search database records"></label>
+      </div>
+      <div class="db-table-caption">
+        <div><span id="dbTableTitle" class="db-table-title">Tables</span><span id="dbTableDescription" class="db-table-description"></span></div>
+        <span id="dbRecordCount" class="db-record-count"></span>
+      </div>
+      <div id="dbMessage" class="db-message">Start an assessment to inspect the target database. Quick Scan does not instantiate LedgerPilot.</div>
+      <div id="dbTableWrap" class="db-table-wrap hidden" tabindex="0" aria-label="Database rows">
+        <table class="db-grid"><thead id="dbTableHead"></thead><tbody id="dbTableBody"></tbody></table>
+      </div>
+      <section id="dbRecordDetail" class="db-record-detail hidden" aria-live="polite"></section>
+      <div class="db-footer"><span id="dbSourceText">Source: SQLite target snapshot</span><span id="dbUpdatedAt">No snapshot yet</span></div>
+    </section>
   </section>
 
   <section class="page" data-page="files">
@@ -190,16 +307,17 @@
     </section>
   </section>
 </main>
-<script src="/static/render.js?v=43"></script>
+<script src="/static/render.js?v=47"></script>
 <script src="/static/ledger.js?v=43"></script>
 <script src="/static/drift.js?v=43"></script>
 <script src="/static/signing.js?v=43"></script>
 <script src="/static/merkle.js?v=43"></script>
 <script src="/static/merkle_zoom.js?v=43"></script>
-<script src="/static/discovery.js?v=43"></script>
+<script src="/static/discovery.js?v=50"></script>
 <script src="/static/discovery_panels.js?v=43"></script>
-<script src="/static/feed.js?v=43"></script>
-<script src="/static/expand.js?v=43"></script>
-<script src="/static/app.js?v=43"></script>
+<script src="/static/feed.js?v=50"></script>
+<script src="/static/expand.js?v=49"></script>
+<script src="/static/database.js?v=3"></script>
+<script src="/static/app.js?v=56"></script>
 </body>
 </html>

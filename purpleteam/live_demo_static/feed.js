@@ -66,6 +66,72 @@ function attackGroup(e) {
 // Held, yet the agent tried the attacker's call and a control stopped it: fooled, not resisting.
 const persuaded = (e) => e.outcome === "held" && e.persuaded > 0;
 
+// Per-question agent execution tree: the discovered topology, coloured from this attack's captured calls.
+// Executed agents/tools are green; the tool the canary reached is red; everything else is "available" (grey).
+function xtDot(kind) { return el("span", kind ? `xt-dot ${kind}` : "xt-dot"); }
+function xtLegend(kind, label) { return add(el("span", "xt-key"), xtDot(kind), document.createTextNode(` ${label}`)); }
+const XT_RISK = { read: "R", write: "W", execute: "SQL", external: "EXT" };  // the tool's icon, from its discovered risk
+
+function executionTree(e) {
+  const topo = window.TOPOLOGY;
+  if (!topo || !(topo.agents || []).length || !(e.calls || []).length) return null;
+  const executed = new Set(e.calls.map((c) => `${c.agent}:${c.tool}`));
+  const ran = new Set(e.calls.map((c) => c.agent));
+  const order = [...new Set(e.calls.map((c) => c.agent))];  // agents that ran, in call order -- the active route
+  const agentsOrdered = [...topo.agents].sort(
+    (a, b) => (order.indexOf(a.name) + 1 || 99) - (order.indexOf(b.name) + 1 || 99));
+  const canaryKey = (e.breached || persuaded(e)) && e.tool ? `${e.agent}:${e.tool}` : "";
+
+  const xt = el("section", "xt");
+  add(xt, add(el("div", "xt-legend"),
+    el("span", "xt-cap", "QUESTION-SPECIFIC CALL MAP"),
+    add(el("span", "xt-keys"), xtLegend("exec", "Executed"), xtLegend("", "Available"), xtLegend("canary", "Canary evidence"))));
+
+  const tag = e.breached ? "CANARY HIT A WRITE ACTION" : persuaded(e) ? "AGENT PERSUADED" : "ROOT";
+  add(xt, add(el("div", `xt-root${e.breached ? " breach" : ""}`), el("span", "xt-q", "Q"),
+    add(el("div", "xt-root-text"), el("div", "xt-root-title", `Attack question · ${attackKind(e.technique, e.id)}`),
+        el("div", "xt-root-sub", "question enters the agent route")),
+    el("span", `xt-root-tag${e.breached || persuaded(e) ? " breach" : ""}`, tag)));
+
+  const grid = el("div", "xt-agents");
+  agentsOrdered.forEach((agent, i) => {
+    const used = ran.has(agent.name);
+    const col = add(el("div", "xt-agent"), add(el("div", `xt-hub${used ? "" : " xt-idle"}`),
+      el("span", "xt-badge", String(i + 1).padStart(2, "0")),
+      add(el("div", "xt-hub-text"), el("div", "xt-agent-name", agent.name),
+          el("div", "xt-agent-sub", `${(agent.tools || []).length} tools · ${used ? "EXECUTED" : "not called"}`))));
+    const tools = el("div", "xt-tools");
+    for (const tool of agent.tools || []) {
+      const key = `${agent.name}:${tool.name}`, canary = key === canaryKey, exec = executed.has(key);
+      const row = add(el("div", canary ? "xt-tool xt-canary" : exec ? "xt-tool xt-exec" : "xt-tool"),
+        el("span", "xt-ticon", XT_RISK[tool.risk] || "•"), el("span", "xt-tname", tool.name));
+      if (exec || canary) row.appendChild(el("span", "xt-check", "✓"));
+      if (canary) row.appendChild(el("span", "xt-canary-tag", "CANARY"));
+      tools.appendChild(row);
+    }
+    grid.appendChild(add(col, tools));
+  });
+  xt.appendChild(add(el("div", "xt-scroll"), grid));  // horizontal pipeline; scrolls/pans when wider than the panel
+
+  const panels = el("div", "xt-panels");
+  if (e.breached || persuaded(e)) {
+    const dl = el("dl", "xt-why");
+    add(dl, el("dt", null, "Agent"), el("dd", null, e.agent || "—"));
+    add(dl, el("dt", null, "Tool"), el("dd", null, e.tool || "—"));
+    add(dl, el("dt", null, "Oracle"), el("dd", null, e.detail || ""));
+    add(panels, add(el("div", "xt-panel"),
+      el("div", "xt-panel-h", e.breached ? "Why this question breached" : "What the agent was persuaded to try"), dl));
+  }
+  if (e.reply) {
+    let reply = e.reply;
+    try { reply = JSON.stringify(JSON.parse(e.reply), null, 2); } catch { /* keep non-JSON */ }
+    add(panels, add(el("div", "xt-panel"), el("div", "xt-panel-h", "Target API response"),
+                    el("pre", "reply target-api-reply", reply)));
+  }
+  if (panels.children.length) xt.appendChild(panels);
+  return xt;
+}
+
 function fmtOutcome(e) {
   if (e.outcome === "breached") return e.technique === "reverify" ? "STILL BREACHES" : "BREACHED";
   if (persuaded(e)) return `HELD · AGENT PERSUADED ${e.persuaded}/${e.trials || e.conclusive}`;
@@ -90,7 +156,12 @@ function onAttackStart(e) {
   clearInterval(timers[e.id]);
   if (replaying) return;
   if (!group.pinned) setOpen(group, true);  // the section with something running is the one shown
-  row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  // Only follow a new attack to the bottom if the reader is already there; if they scrolled up to read a
+  // result, leave them where they are rather than yanking the feed back down.
+  const feedEl = $("feed");
+  if (feedEl.scrollHeight - feedEl.scrollTop - feedEl.clientHeight < 80) {
+    row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }
   const started = Date.now();
   timers[e.id] = setInterval(() => { waiting.textContent = `waiting for the agent… ${((Date.now() - started) / 1000).toFixed(1)}s`; }, 200);
 }
@@ -107,7 +178,25 @@ function onAttackResult(e) {
   if (persuaded(e)) row.querySelector(".arow-dot").classList.add("persuaded");
   result.textContent = `${fmtOutcome(e)} · ${(e.seconds || 0).toFixed(1)}s`;
   const body = row.querySelector(".arow-body");
-  if (e.reply) add(body, el("div", "label", "The agent's real reply:"), el("pre", "reply", e.reply));
+  // The call map goes directly under the question; it already carries the agents/tools, why it breached and the
+  // API response, so those separate blocks are only shown when there is no tree (e.g. a re-attack with no calls).
+  const tree = executionTree(e);
+  if (tree) body.insertBefore(tree, body.querySelector(".payload")?.nextSibling || null);
+  const agentReplies = Array.isArray(e.agent_replies) ? e.agent_replies : [];
+  if (agentReplies.length) {
+    add(body, el("div", "label", "Agent natural-language reply:"));
+    const grid = el("div", "agent-replies-grid");  // two agent replies per row
+    for (const message of agentReplies) {
+      add(grid, add(el("div", "agent-reply-card"),
+        el("div", "agent-reply-agent", message.agent || "agent"), el("pre", "reply", message.text || "")));
+    }
+    body.appendChild(grid);
+  }
+  if (!tree && e.reply) {
+    let targetReply = e.reply;
+    try { targetReply = JSON.stringify(JSON.parse(e.reply), null, 2); } catch { /* preserve non-JSON target replies */ }
+    add(body, el("div", "label", "Target API response:"), el("pre", "reply target-api-reply", targetReply));
+  }
   if (e.breached) body.appendChild(el("div", "proof", `Breach proven — ${e.detail}`));
   else if (persuaded(e)) body.appendChild(el("div", "proof attempt", `Attempt detected — ${e.detail}`));
   else if (e.technique === "reverify") body.appendChild(el("div", "label", e.detail));

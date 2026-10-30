@@ -133,7 +133,8 @@ def test_a_run_starts_and_clears_the_in_progress_flag_when_it_finishes(monkeypat
     client = TestClient(app)
     assert client.get("/runs").json()["current"] == run_id
     assert client.get(f"/runs/{run_id}/events").json()["events"][0] == {"type": "run_started", "run_id": run_id,
-                                                                        "mode": "full", "attack_type": "all"}
+                                                                        "mode": "full", "attack_type": "all",
+                                                                        "max_unique_prompts": 5}
     assert client.get("/runs/not-a-run/ledger").status_code == 404
     for _ in range(50):
         if seen.get("ran"):
