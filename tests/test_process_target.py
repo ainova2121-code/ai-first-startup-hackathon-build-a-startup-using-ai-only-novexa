@@ -144,7 +144,8 @@ def test_the_full_attack_patch_reattack_loop_runs_against_an_unmodified_out_of_p
     report = asyncio.run(assessment.run([ATTACK]))
 
     assert [(r.id, r.outcome) for r in report.results] == [("override", "breached")]
-    assert "P4" in report.defense.patch_ids  # the defender chose a guard for the breached tool
+    assert "P14" in report.defense.patch_ids and "P4" not in report.defense.patch_ids  # a catalog patch refuses
+    # the planted value on the breached tool, so no human-review hold is needed
     assert report.verification.attack_blocked and report.verification.legit_passed
     assert report.safe_to_ship, report.blockers()
     assert (project / "agentapp.py").read_text(encoding="utf-8") == PROJECT  # its code was never touched

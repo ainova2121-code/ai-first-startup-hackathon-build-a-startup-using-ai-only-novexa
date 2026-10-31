@@ -33,7 +33,7 @@ def test_a_breach_report_shows_the_finding_the_patch_and_the_re_verification(tmp
     text = render(_report(tmp_path))
     assert "NOT SAFE TO SHIP" not in text and "SAFE TO SHIP" in text  # patched and re-verified
     assert "injection_action" in text and "update_vendor_bank" in text
-    assert "**Patched with:** P2, P15, P4" in text  # P15 (prompt hardening) is applied to injection too
+    assert "**Patched with:** P2, P15, P14" in text  # the value patch, not a human-review hold; P15 hardens too
     assert "attack held; legitimate behaviour preserved" in text
 
 

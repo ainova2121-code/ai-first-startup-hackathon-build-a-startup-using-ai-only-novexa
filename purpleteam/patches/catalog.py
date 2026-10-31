@@ -10,8 +10,10 @@ FINDING_PATCHES: dict[str, list[str]] = {
     # P15 (prompt hardening) is the prompt-level layer on every injection / leak kind: it frames untrusted
     # content as data in the channel it arrives on, so the agent is less willing to act on it or reveal its
     # own instructions. It sits alongside the gating/scanning guards, never instead of them.
-    "injection_action": ["P2", "P15", "P4", "P5"],
-    "jailbreak": ["P2", "P15", "P4"],
+    # P14 refuses a planted destination or identity value outright; P4's human-review hold is the fallback when no
+    # value patch covers the breached tool (``Defender._confined``), or when a verified replay escalates.
+    "injection_action": ["P2", "P15", "P14", "P4", "P5"],
+    "jailbreak": ["P2", "P15", "P14", "P4"],
     "sql_injection": ["P8"],
     # P16 after P8: read-only is not enough when the rows belong to other tenants (needs the operator's facts).
     "exfiltration": ["P2", "P15", "P8", "P16", "P9"],
@@ -67,6 +69,8 @@ OPTIONAL_PATCHES = frozenset({"P5", "P16"})  # P16 likewise needs the operator's
 # P4's hold on that tool adds only friction (every legitimate lookup waits for a person). Dropped only at the base
 # escalation level: a verified replay that still breaches escalates back to holds.
 SCOPED_REPLACES_HOLD = frozenset({"P8", "P16"})
+# Each refuses a planted value on the tool it checks (P5: only verified values; P14: none only outside content supplied).
+VALUE_PATCHES = frozenset({"P5", "P14"})
 
 # A breach the catalog names no guard for still gets a guard: a generic dynamic containment derived from the
 # breach itself -- hold the exact tool it went through for human verification (P4). The guard code is fixed and
@@ -107,7 +111,7 @@ def missing_patches(kind: str, applied: set[str], has_tool: bool = True) -> list
     if recommended is None:
         return ["no catalog entry"]
     required = set(recommended) - OPTIONAL_PATCHES
-    if SCOPED_REPLACES_HOLD <= applied:
+    if SCOPED_REPLACES_HOLD <= applied or applied & VALUE_PATCHES:  # the verified replay proves they hold
         required.discard("P4")
     if not has_tool:
         scoped = required - GLOBAL_PATCHES

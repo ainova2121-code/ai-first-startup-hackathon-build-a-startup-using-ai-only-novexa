@@ -116,6 +116,9 @@ def policy_data(findings: list[Finding], profile: TargetProfile, facts: dict | N
     # Which agent holds which tool: an escalated defense reads it (widened review scope, the inferred manifest a
     # denial narrows), so without it a rebuild would enforce less than was verified.
     data["holdings"] = sorted([t.agent, t.name, t.risk] for t in profile.tools)
+    # Which arguments carry a destination or identity value: P14 checks exactly these, and the defender relies on it
+    # in place of a hold, so a rebuild without them would enforce less than was verified.
+    data["value_args"] = {tool: sorted(args) for tool, args in sorted(profile.value_args.items())}
     return data
 
 
@@ -160,8 +163,9 @@ def rebuild(data: dict, review_queue: ReviewQueue | None = None, *, secrets_key:
                for f in data["findings"]]
     execute_tools = set(data.get("execute_tools", []))
     if "holdings" in data:
-        tools = [DiscoveredTool(name, "", {}, "policy", risk, "", agent_name=agent)
-                 for agent, name, risk in data["holdings"]]
+        value_args = data.get("value_args", {})
+        tools = [DiscoveredTool(name, "", {arg: {} for arg in value_args.get(name, ())}, "policy", risk, "",
+                                agent_name=agent) for agent, name, risk in data["holdings"]]
     else:
         tools = [DiscoveredTool(name, "", {}, "policy", EXECUTE, "") for name in execute_tools]
         tools += [DiscoveredTool(name, "", {}, "policy", WRITE, "")

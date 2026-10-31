@@ -20,7 +20,7 @@ from purpleteam.oversight import HumanReviewGate, ReviewQueue
 from purpleteam.patches.base import CompositeGuard, Patch
 from purpleteam.patches.caller_scope import CallerScopeGuard
 from purpleteam.patches.catalog import (
-    FINDING_PATCHES, GLOBAL_PATCHES, PATCH_SUMMARY, SCOPED_REPLACES_HOLD, fallback_patches)
+    FINDING_PATCHES, GLOBAL_PATCHES, PATCH_SUMMARY, SCOPED_REPLACES_HOLD, VALUE_PATCHES, fallback_patches)
 from purpleteam.patches.prompt_hardening import PromptHardeningGuard
 from purpleteam.patches.provenance import ProvenanceGuard
 from purpleteam.patches.rules import (
@@ -88,8 +88,8 @@ class Defender:
     def select(self, finding: Finding) -> Defense:
         ids = [pid for pid in fallback_patches(finding.kind, bool(finding.tool)) if pid not in self._exclude]
         built = [(pid, self._build(pid, finding)) for pid in ids]
-        if self._escalation == 0 and SCOPED_REPLACES_HOLD <= {pid for pid, patch in built if patch is not None}:
-            built = [(pid, patch) for pid, patch in built if pid != "P4"]  # the tool is already confined to its job
+        if self._escalation == 0 and self._confined(finding, {pid for pid, patch in built if patch is not None}):
+            built = [(pid, patch) for pid, patch in built if pid != "P4"]  # a catalog patch already stops it
         patches = [patch for _, patch in built if patch is not None]
         applied = [{"id": pid, "hash": patch.code_hash(), "summary": PATCH_SUMMARY[pid]}
                    for pid, patch in built if patch is not None]
@@ -123,6 +123,15 @@ class Defender:
         entries = [entry for entry, _ in ordered]
         guard = CompositeGuard([patch for _, patch in ordered])
         return Defense([e["id"] for e in entries], guard, "; ".join(rationale), mode=self._mode, applied=entries)
+
+    def _confined(self, finding: Finding, built: set[str]) -> bool:
+        """Whether a deterministic catalog patch stops this breach on its own tool, so P4's human-review hold would
+        add only friction: P8 + P16 confine a query tool to its caller's reads; P5 or P14 refuse the planted value
+        on a tool whose value arguments they check. Only at the base level: if a verified replay still breaches, or
+        the patch is proven to break legitimate work, the defense escalates (or excludes it) and P4 returns."""
+        if SCOPED_REPLACES_HOLD <= built or "P5" in built:
+            return True
+        return bool(built & VALUE_PATCHES) and finding.tool in self._profile.value_args
 
     def _scope_key(self, patch_id: str, finding: Finding) -> tuple | str | None:
         if patch_id in GLOBAL_PATCHES:
