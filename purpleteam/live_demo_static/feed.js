@@ -10,12 +10,27 @@ const timers = {};
 const typers = {};  // attack id -> finishes its question's typing at once
 const calm = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-// The question types itself out as it is sent: about 55 characters a second, but never longer than 1.6 s, so a long
-// jailbreak template or forty attacks starting at once never hold the page up. Returns a function that finishes it.
+// The question types itself out as it is sent, like a person typing: an uneven rhythm of about 28 characters a second,
+// a short beat at each space and a longer one after punctuation. A long jailbreak template keeps that rhythm but is
+// compressed to finish within 7 s, so it never holds the page up. Returns a function that finishes it at once.
+const TYPE_MAX_MS = 7000;
+
+function keystrokes(text) {
+  const times = [];
+  let at = 0;
+  for (let i = 0; i < text.length; i += 1) {
+    const previous = text[i - 1] || "";
+    at += 26 + Math.random() * 24 + (/[.,;:!?]/.test(previous) ? 160 : previous === " " ? 35 : 0);
+    times.push(at);
+  }
+  const squeeze = at > TYPE_MAX_MS ? TYPE_MAX_MS / at : 1;
+  return times.map((t) => t * squeeze);
+}
+
 function typeOut(pre, text) {
   if (calm || !text) { pre.textContent = text; return () => {}; }
-  const duration = Math.min(1600, Math.max(450, text.length * 18)), started = performance.now();
-  let frame = 0, done = false;
+  const times = keystrokes(text), started = performance.now();
+  let frame = 0, done = false, shown = 0;
   const finish = () => {
     if (done) return;
     done = true;
@@ -24,7 +39,7 @@ function typeOut(pre, text) {
     pre.classList.remove("typing");
   };
   const step = (now) => {
-    const shown = Math.min(text.length, Math.ceil(text.length * (now - started) / duration));
+    while (shown < text.length && times[shown] <= now - started) shown += 1;
     pre.textContent = text.slice(0, shown);
     if (shown < text.length) frame = requestAnimationFrame(step); else finish();
   };
