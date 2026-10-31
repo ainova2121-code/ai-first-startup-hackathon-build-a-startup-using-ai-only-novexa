@@ -116,6 +116,16 @@ main { padding: 22px 28px 40px; display: grid; gap: 18px; }
 .arow-result { margin-left: auto; font: 11.5px var(--mono); }
 .arow-body { padding: 0 12px 12px 31px; }
 .payload, .reply { font: 12px/1.6 var(--mono); color: var(--text-muted); white-space: pre-wrap; word-break: break-word; margin: 0; }
+/* the attack question: a highlighted block, glowing while the agent is being asked, typed out live as it is sent */
+.arow .payload { padding: 9px 12px; border-left: 2px solid var(--steel); border-radius: 0 7px 7px 0; background: rgba(76,147,236,.05);
+                 color: #C3CCD8; }
+.arow.reverify .payload { border-left-color: var(--amber); background: rgba(214,152,42,.05); }
+.arow.asking { border-color: rgba(76,147,236,.5); box-shadow: 0 0 0 1px rgba(76,147,236,.14), 0 8px 24px rgba(76,147,236,.09); }
+.arow.reverify.asking { border-color: rgba(214,152,42,.55); box-shadow: 0 0 0 1px rgba(214,152,42,.14), 0 8px 24px rgba(214,152,42,.08); }
+.arow.asking .payload { color: var(--text); background: rgba(76,147,236,.09); }
+.payload.typing::after { content: "\258D"; margin-left: 1px; color: var(--steel); animation: caret 1s steps(1) infinite; }
+@keyframes caret { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .payload.typing::after { animation: none; } }
 .reply { margin-top: 8px; padding: 8px 10px; background: var(--panel); border: 1px solid var(--border-soft); border-radius: 6px; }
 .agent-reply-agent { margin-top: 7px; color: var(--steel); font: 600 10.5px var(--mono); text-transform: uppercase; letter-spacing: .04em; }
 .target-api-reply { color: var(--text); }

@@ -7,6 +7,32 @@ let rows = {};      // attack id -> its row
 let rowGroup = {};  // attack id -> the section it sits in
 let groups = {};    // section title -> its state
 const timers = {};
+const typers = {};  // attack id -> finishes its question's typing at once
+const calm = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+// The question types itself out as it is sent: about 55 characters a second, but never longer than 1.6 s, so a long
+// jailbreak template or forty attacks starting at once never hold the page up. Returns a function that finishes it.
+function typeOut(pre, text) {
+  if (calm || !text) { pre.textContent = text; return () => {}; }
+  const duration = Math.min(1600, Math.max(450, text.length * 18)), started = performance.now();
+  let frame = 0, done = false;
+  const finish = () => {
+    if (done) return;
+    done = true;
+    cancelAnimationFrame(frame);
+    pre.textContent = text;
+    pre.classList.remove("typing");
+  };
+  const step = (now) => {
+    const shown = Math.min(text.length, Math.ceil(text.length * (now - started) / duration));
+    pre.textContent = text.slice(0, shown);
+    if (shown < text.length) frame = requestAnimationFrame(step); else finish();
+  };
+  pre.textContent = "";
+  pre.classList.add("typing");
+  frame = requestAnimationFrame(step);
+  return finish;
+}
 
 const KINDS = {
   claim: "Business-claim injection",
@@ -30,6 +56,7 @@ function attackKind(technique, id) {
 
 function resetFeed() {
   for (const id in timers) clearInterval(timers[id]);
+  for (const id in typers) { typers[id](); delete typers[id]; }
   rows = {}; rowGroup = {}; groups = {};
 }
 
@@ -154,13 +181,16 @@ function onAttackStart(e) {
   if (reverify) head.appendChild(el("span", "arow-tag", e.replays ? `↻ re-attack of ${e.replays}` : "↻ same payload"));
   const waiting = el("span", "arow-result faint", replaying ? "no result recorded" : "waiting for the agent… 0.0s");
   head.appendChild(waiting);
-  const row = add(el("div", reverify ? "arow reverify" : "arow"), head, add(el("div", "arow-body"), el("pre", "payload", e.payload)));
+  const question = el("pre", "payload", e.payload);
+  const row = add(el("div", reverify ? "arow reverify" : "arow"), head, add(el("div", "arow-body"), question));
   group.body.appendChild(row);
   rows[e.id] = row; rowGroup[e.id] = group;
   group.total += 1; group.running += 1;
   showGroup(group);
   clearInterval(timers[e.id]);
   if (replaying) return;
+  row.classList.add("asking");  // highlighted for as long as the agent is being asked
+  typers[e.id] = typeOut(question, e.payload || "");
   if (!group.pinned) setOpen(group, true);  // the section with something running is the one shown
   // Only follow a new attack to the bottom if the reader is already there; if they scrolled up to read a
   // result, leave them where they are rather than yanking the feed back down.
@@ -176,6 +206,8 @@ function onAttackResult(e) {
   const row = rows[e.id], group = rowGroup[e.id];
   if (!row) return;
   clearInterval(timers[e.id]);
+  if (typers[e.id]) { typers[e.id](); delete typers[e.id]; }  // the agent answered: show the whole question now
+  row.classList.remove("asking");
   row.querySelector(".arow-dot").className = `arow-dot ${e.outcome}`;
   const result = row.querySelector(".arow-result");
   result.className = "arow-result";
