@@ -3,12 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>purpleteam — target under test</title>
+<title>purpleteam — AI purple teaming</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/app.css?v=51">
-<link rel="stylesheet" href="/static/target.css?v=3">
+<link rel="stylesheet" href="/static/target.css?v=4">
 </head>
 <body>
 <header class="topbar">
@@ -17,39 +17,74 @@
 </header>
 <main class="ab-main">
   <section class="ab-hero">
-    <div class="ab-eyebrow"><span class="ab-pulse"></span>Target under test</div>
-    <h1 id="abTitle" class="ab-title">&nbsp;</h1>
-    <div id="abStory" class="ab-story" aria-live="polite"></div>
+    <div class="ab-eyebrow"><span class="ab-pulse"></span>AI purple teaming</div>
+    <h1 class="ab-title">Red-team your AI agents. <br>Blue-team the fix. Prove it.</h1>
+    <p class="ab-lead">purpleteam plugs into a multi-agent AI system, maps its agents and tools on its own, attacks them the
+      way a real adversary would, fixes what breaks with reviewed patches only, and re-attacks to prove every fix holds.
+      Each step is signed into a tamper-evident audit trail.</p>
   </section>
 
-  <section class="ab-plan" aria-labelledby="abPlanTitle">
-    <h2 id="abPlanTitle" class="ab-plan-title">When you start</h2>
-    <ol class="ab-steps">
-      <li><span class="ab-step-num">01</span><strong>Discover</strong>
-        <span>Reads the target's own code to find its agents, their tools and what each tool can do. The map builds live in the Discovery tab.</span></li>
-      <li><span class="ab-step-num">02</span><strong>Attack</strong>
-        <span>Sends the attack dataset at the agents as they are, and proves every breach by what an agent actually did, never by reading its words.</span></li>
-      <li><span class="ab-step-num">03</span><strong>Patch</strong>
-        <span>Picks fixes from a reviewed catalog: runtime guards, plus exact source edits that are verified before they apply.</span></li>
-      <li><span class="ab-step-num">04</span><strong>Verify and sign</strong>
-        <span>Re-attacks the patched agents with the same payloads, then signs the verdict into a tamper-evident ledger.</span></li>
-    </ol>
+  <section class="ab-cycle" aria-labelledby="abCycleTitle">
+    <h2 id="abCycleTitle" class="ab-section-title">How a run works</h2>
+    <div class="ab-cycle-body">
+      <svg id="abRing" class="ab-ring" viewBox="0 0 320 320" role="img"
+           aria-label="The purple-team cycle: discover, attack, patch, verify, sign, and round again">
+        <defs>
+          <linearGradient id="abRingGrad" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#E0534F"/><stop offset=".5" stop-color="#9B8AF0"/><stop offset="1" stop-color="#4C93EC"/>
+          </linearGradient>
+          <radialGradient id="abCore"><stop offset="0" stop-color="#9B8AF0" stop-opacity=".35"/><stop offset="1" stop-color="#9B8AF0" stop-opacity="0"/></radialGradient>
+        </defs>
+        <circle cx="160" cy="160" r="104" fill="url(#abCore)"/>
+        <circle id="abOrbit" cx="160" cy="160" r="118" fill="none" stroke="url(#abRingGrad)" stroke-width="1.5" stroke-opacity=".55"/>
+        <circle class="ab-runner" r="4.5" fill="#E8E4FF"/>
+        <g id="abNodes"></g>
+        <text x="160" y="154" text-anchor="middle" class="ab-core-red">red</text>
+        <text x="160" y="172" text-anchor="middle" class="ab-core-blue">+ blue</text>
+      </svg>
+      <ol id="abSteps" class="ab-steps">
+        <li data-step="0"><span class="ab-step-num">01</span><div><strong>Discover</strong>
+          <span>Reads the system's own code to map its agents, their tools and what each tool can do.</span></div></li>
+        <li data-step="1"><span class="ab-step-num">02</span><div><strong>Attack</strong>
+          <span>Red team: attack datasets and adaptive attacks. A breach counts only when an agent actually does the harmful thing.</span></div></li>
+        <li data-step="2"><span class="ab-step-num">03</span><div><strong>Patch</strong>
+          <span>Blue team: fixes chosen from a reviewed catalog, with source edits applied only after independent verification.</span></div></li>
+        <li data-step="3"><span class="ab-step-num">04</span><div><strong>Verify</strong>
+          <span>Re-attacks the patched system with the same payloads. A fix counts only if every attack now holds.</span></div></li>
+        <li data-step="4"><span class="ab-step-num">05</span><div><strong>Sign</strong>
+          <span>Every attack, fix and verdict is signed into an append-only, tamper-evident ledger.</span></div></li>
+      </ol>
+    </div>
   </section>
 
-  <section class="ab-start">
-    <a class="btn primary ab-start-btn" href="/?start=1#/discovery">Start the assessment <span aria-hidden="true">→</span></a>
-    <span class="ab-start-note">Runs the custom dataset. Choose another mode in the console.</span>
+  <section class="ab-choose" aria-labelledby="abChooseTitle">
+    <h2 id="abChooseTitle" class="ab-section-title">Choose a target</h2>
+    <div id="abTargets" class="ab-targets" role="radiogroup" aria-labelledby="abChooseTitle"></div>
+    <p id="abTargetsError" class="ab-note hidden">The targets could not be loaded right now. Refresh to try again.</p>
   </section>
-  <footer class="ab-footer">
-    <p class="ab-notice"><strong>Demo data disclaimer.</strong> The invoice PDFs are real invoices from the FCC political
-      public file, taken unedited from Amazon's <a href="https://huggingface.co/datasets/amazon/ConfBench" target="_blank"
-      rel="noopener noreferrer">ConfBench</a> dataset (FCC Invoices Verified subset) and licensed under
-      <a href="https://creativecommons.org/licenses/by-nc/4.0/" target="_blank" rel="noopener noreferrer">CC BY-NC 4.0</a>.
-      They are used for non-commercial demonstration and security research only. Bank details and email addresses are
-      synthetic. This project is not affiliated with or endorsed by Amazon, the FCC or any station named in the invoices.</p>
-    <p>The target, in its owner's own words · nothing here calls a model</p>
-  </footer>
+
+  <section id="abTarget" class="ab-target hidden" aria-live="polite">
+    <div class="ab-eyebrow">Target under test</div>
+    <h2 id="abTargetTitle" class="ab-target-title"></h2>
+    <div id="abTargetStory" class="ab-story"></div>
+    <div class="ab-start">
+      <a class="btn primary ab-start-btn" href="/?start=1#/discovery">Start assessment <span aria-hidden="true">→</span></a>
+      <span class="ab-note">Opens Discovery and runs the custom dataset. Choose another mode in the console.</span>
+    </div>
+    <div class="ab-notice">
+      <p><strong>Demo Data Disclaimer:</strong> The invoice PDFs used in this application are real documents sourced
+        unedited from the FCC political public file via Amazon's ConfBench dataset (FCC Invoices Verified subset),
+        licensed under <a href="https://creativecommons.org/licenses/by-nc/4.0/" target="_blank" rel="noopener noreferrer">CC BY-NC 4.0</a>.</p>
+      <ul>
+        <li><strong>Purpose:</strong> For non-commercial demonstration and security research only.</li>
+        <li><strong>Privacy:</strong> All bank details and email addresses are synthetic.</li>
+        <li><strong>Affiliation:</strong> This project is independent and is not affiliated with, sponsored by, or endorsed
+          by Amazon, the FCC, or any broadcast station named in the documents.</li>
+      </ul>
+    </div>
+  </section>
+  <footer class="ab-footer">Nothing on this page calls a model or touches a target</footer>
 </main>
-<script src="/static/target.js?v=3"></script>
+<script src="/static/target.js?v=4"></script>
 </body>
 </html>

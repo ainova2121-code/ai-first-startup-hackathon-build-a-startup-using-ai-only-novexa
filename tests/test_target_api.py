@@ -34,3 +34,12 @@ def test_the_page_is_served_and_a_fresh_sign_in_lands_on_it(tmp_path):
     page = client.get("/target")
     assert page.status_code == 200 and "Open the console" in page.text
     assert client.get("/").status_code == 200  # the console itself is still one click away
+
+
+def test_the_picker_lists_the_runnable_targets_in_their_owners_words_without_discovery(tmp_path, monkeypatch):
+    from purpleteam import target_api
+    monkeypatch.setattr(target_api, "discover_profile", lambda: (_ for _ in ()).throw(AssertionError("no discovery")))
+    targets = _client(tmp_path).get("/targets").json()
+    assert [t["id"] for t in targets] == ["ledgerpilot"]
+    assert targets[0]["title"] == "LedgerPilot" and "accounts-payable" in targets[0]["paragraphs"][0]
+    assert _client(tmp_path, login=True).get("/targets", follow_redirects=False).status_code == 401

@@ -15,7 +15,7 @@ from fastapi import APIRouter
 from fastapi.responses import FileResponse
 
 from purpleteam.live_run import tool_view
-from purpleteam.targets.ledgerpilot import about, discover_profile, seeded_tables
+from purpleteam.targets.ledgerpilot import LedgerPilotTarget, about, discover_profile, seeded_tables
 
 
 def overview() -> dict:
@@ -40,10 +40,11 @@ def target_routes(static_dir: Path) -> APIRouter:
     def page() -> FileResponse:
         return FileResponse(static_dir / "target.html", headers={"Cache-Control": "no-cache"})
 
-    @router.get("/target/about")
-    def target_about() -> dict:
-        """The owner's summary alone, for the About page: no discovery, which runs once, in the run itself."""
-        return about()
+    @router.get("/targets")
+    def targets() -> list[dict]:
+        """The targets this console can run, each in its owner's words, for the picker after sign-in. No discovery:
+        that runs once, in the run itself. LedgerPilot is the only one today; another adds an entry here."""
+        return [{"id": LedgerPilotTarget.name, **about()}]
 
     @router.get("/target/overview")
     def target_overview() -> dict:

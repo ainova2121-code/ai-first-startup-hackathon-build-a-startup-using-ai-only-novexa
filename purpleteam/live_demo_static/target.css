@@ -1,67 +1,105 @@
-/* About page: the target in its owner's words, what a run does, and one way in. Tokens come from app.css. */
+/* Landing page after sign-in: what purpleteam does, a target picker, then the chosen target and Start.
+   Tokens come from app.css. */
 .ab-console { color: var(--text-muted); font-size: 13px; font-weight: 500; text-decoration: none; }
 .ab-console:hover { color: var(--text); }
 
-.ab-main { position: relative; box-sizing: border-box; width: 100%; max-width: 1080px; margin: 0 auto;
+.ab-main { position: relative; box-sizing: border-box; width: 100%; max-width: 1120px; margin: 0 auto;
   padding: 72px 28px 48px; }
-.ab-main::before { content: ""; position: absolute; z-index: -1; top: -40px; left: -10%; width: 70%; height: 460px;
-  background: radial-gradient(closest-side, rgba(76,147,236,.13), transparent 70%),
-              radial-gradient(closest-side at 80% 60%, rgba(155,138,240,.10), transparent 70%);
+.ab-main::before { content: ""; position: absolute; z-index: -1; top: -40px; left: -10%; width: 75%; height: 480px;
+  background: radial-gradient(closest-side, rgba(224,83,79,.10), transparent 70%),
+              radial-gradient(closest-side at 70% 55%, rgba(76,147,236,.13), transparent 70%);
   filter: blur(8px); animation: ab-drift 14s ease-in-out infinite alternate; pointer-events: none; }
 
-.ab-eyebrow { display: inline-flex; align-items: center; gap: 9px; color: var(--steel); font: 600 11px var(--mono);
+.ab-eyebrow { display: inline-flex; align-items: center; gap: 9px; color: var(--violet); font: 600 11px var(--mono);
   letter-spacing: .14em; text-transform: uppercase; animation: rise .5s ease both; }
-.ab-pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--steel); animation: pulse 2.2s infinite; }
-.ab-title { margin: 14px 0 26px; font-size: clamp(40px, 6vw, 64px); font-weight: 700; line-height: 1.02;
-  letter-spacing: -.025em; background: linear-gradient(100deg, #F2F5F9 30%, #A9C8F5 70%, var(--violet));
+.ab-pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--violet); animation: pulse 2.2s infinite; }
+.ab-title { margin: 16px 0 22px; font-size: clamp(34px, 5vw, 56px); font-weight: 700; line-height: 1.08;
+  letter-spacing: -.025em; background: linear-gradient(100deg, #F6C2C0 0%, #F2F5F9 35%, #C9D8F7 65%, var(--steel));
   -webkit-background-clip: text; background-clip: text; color: transparent; animation: rise .6s .05s ease both; }
-.ab-story { display: grid; gap: 14px; max-width: 760px; }
-.ab-story p { margin: 0; color: var(--text-muted); font-size: 15px; line-height: 1.75; animation: rise .6s ease both; }
-.ab-story .ab-lead { color: #D3DAE4; font-size: 18.5px; line-height: 1.65; }
-
-.ab-plan { margin-top: 64px; }
-.ab-plan-title { margin: 0 0 22px; color: var(--text-faint); font: 600 11px var(--mono); letter-spacing: .14em;
+.ab-lead { max-width: 780px; margin: 0; color: #C3CBD6; font-size: 17px; line-height: 1.7; animation: rise .6s .15s ease both; }
+.ab-section-title { margin: 0 0 24px; color: var(--text-faint); font: 600 11px var(--mono); letter-spacing: .14em;
   text-transform: uppercase; }
-.ab-steps { display: grid; grid-template-columns: repeat(4, 1fr); gap: 28px; margin: 0; padding: 0; list-style: none; }
-.ab-steps li { position: relative; display: grid; align-content: start; gap: 7px; padding-top: 18px;
-  animation: rise .55s ease both; }
-.ab-steps li:nth-child(1) { animation-delay: .55s; }
-.ab-steps li:nth-child(2) { animation-delay: .65s; }
-.ab-steps li:nth-child(3) { animation-delay: .75s; }
-.ab-steps li:nth-child(4) { animation-delay: .85s; }
-.ab-steps li::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 1px;
-  background: linear-gradient(90deg, var(--steel), rgba(155,138,240,.35) 60%, transparent); }
-.ab-step-num { color: var(--steel); font: 600 11px var(--mono); }
-.ab-steps strong { font-size: 15px; font-weight: 600; }
-.ab-steps li > span:last-child { color: var(--text-muted); font-size: 13px; line-height: 1.6; }
 
-.ab-start { display: flex; flex-wrap: wrap; align-items: center; gap: 18px; margin-top: 58px;
-  animation: rise .6s 1s ease both; }
+/* the cycle: an animated ring beside the five steps it lights in turn */
+.ab-cycle { margin-top: 72px; animation: rise .6s .25s ease both; }
+.ab-cycle-body { display: grid; grid-template-columns: minmax(260px, 380px) 1fr; align-items: center; gap: 48px; }
+.ab-ring { width: 100%; height: auto; overflow: visible; }
+.ab-node-disc { fill: var(--panel); stroke: var(--node); stroke-width: 1.5; stroke-opacity: .55;
+  transition: stroke-opacity .3s ease, filter .3s ease; }
+.ab-node-num { fill: var(--text-faint); font: 600 10px var(--mono); transition: fill .3s ease; }
+.ab-node-label { fill: var(--text-muted); font: 500 12px var(--sans); transition: fill .3s ease; }
+.ab-node.on .ab-node-disc { fill: color-mix(in srgb, var(--node) 16%, var(--panel)); stroke-opacity: 1;
+  filter: drop-shadow(0 0 10px var(--node)); }
+.ab-node.on .ab-node-num { fill: var(--node); }
+.ab-node.on .ab-node-label { fill: var(--text); }
+.ab-runner { filter: drop-shadow(0 0 6px #B9AEFF); }
+.ab-core-red { fill: #F0A3A0; font: 600 14px var(--mono); }
+.ab-core-blue { fill: #8FBAF2; font: 600 14px var(--mono); }
+
+.ab-steps { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.ab-steps li { display: grid; grid-template-columns: 34px 1fr; gap: 12px; padding: 12px 14px; border-radius: 10px;
+  border: 1px solid transparent; cursor: default; transition: background .3s ease, border-color .3s ease; }
+.ab-steps li.on { border-color: var(--border-soft); background: rgba(19,26,36,.7); }
+.ab-step-num { padding-top: 2px; color: var(--text-faint); font: 600 11px var(--mono); transition: color .3s ease; }
+.ab-steps li.on .ab-step-num { color: var(--violet); }
+.ab-steps strong { display: block; margin-bottom: 3px; font-size: 14.5px; font-weight: 600; }
+.ab-steps li div > span { color: var(--text-muted); font-size: 13px; line-height: 1.6; }
+
+/* target picker */
+.ab-choose { margin-top: 76px; }
+.ab-targets { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+.ab-target-card { position: relative; display: grid; gap: 6px; padding: 18px 20px 18px 50px; border: 1px solid var(--border);
+  border-radius: 12px; background: linear-gradient(180deg, var(--panel-alt), var(--panel)); color: var(--text);
+  font: inherit; text-align: left; cursor: pointer; transition: border-color .2s ease, box-shadow .2s ease, transform .2s ease; }
+.ab-target-card:hover { transform: translateY(-1px); border-color: #34425A; }
+.ab-target-card:focus-visible { outline: 2px solid rgba(155,138,240,.6); outline-offset: 2px; }
+.ab-target-card[aria-checked="true"] { border-color: var(--violet); box-shadow: 0 0 0 1px var(--violet), 0 10px 30px rgba(155,138,240,.18); }
+.ab-card-mark { position: absolute; top: 20px; left: 18px; box-sizing: border-box; width: 18px; height: 18px;
+  border: 1.5px solid var(--border); border-radius: 50%; transition: border-color .2s ease; }
+.ab-target-card[aria-checked="true"] .ab-card-mark { border: 5px solid var(--violet); }
+.ab-card-name { font-size: 16px; font-weight: 600; }
+.ab-card-blurb { color: var(--text-muted); font-size: 13px; line-height: 1.55; }
+
+/* the chosen target */
+.ab-target { margin-top: 56px; padding-top: 40px; border-top: 1px solid var(--border-soft); scroll-margin-top: 80px; }
+.ab-target.reveal { animation: rise .5s ease both; }
+.ab-target .ab-eyebrow { color: var(--steel); }
+.ab-target-title { margin: 12px 0 18px; font-size: clamp(30px, 4vw, 44px); font-weight: 700; letter-spacing: -.02em; }
+.ab-story { display: grid; gap: 12px; max-width: 780px; }
+.ab-story p { margin: 0; color: var(--text-muted); font-size: 15px; line-height: 1.75; }
+.ab-story .ab-story-lead { color: #D3DAE4; font-size: 17px; line-height: 1.65; }
+
+.ab-start { display: flex; flex-wrap: wrap; align-items: center; gap: 18px; margin-top: 34px; }
 .ab-start-btn { display: inline-flex; align-items: center; gap: 10px; padding: 14px 26px; border-radius: 10px;
   font-size: 15px; font-weight: 600; text-decoration: none; box-shadow: 0 0 0 1px rgba(76,147,236,.4),
   0 10px 34px rgba(76,147,236,.32); transition: transform .15s ease, box-shadow .15s ease; }
 .ab-start-btn:hover { transform: translateY(-1px); box-shadow: 0 0 0 1px rgba(76,147,236,.6), 0 14px 40px rgba(76,147,236,.42); }
 .ab-start-btn span { transition: transform .15s ease; }
 .ab-start-btn:hover span { transform: translateX(3px); }
-.ab-start-note { color: var(--text-faint); font-size: 12.5px; }
-.ab-footer { display: grid; gap: 14px; margin-top: 72px; padding-top: 20px; border-top: 1px solid var(--border-soft);
-  color: var(--text-faint); font: 10.5px var(--mono); }
-.ab-footer p { margin: 0; }
-.ab-notice { max-width: 860px; font: 12px/1.65 var(--sans); }
+.ab-note { margin: 0; color: var(--text-faint); font-size: 12.5px; }
+
+.ab-notice { max-width: 860px; margin-top: 40px; padding: 16px 18px; border-left: 2px solid var(--border);
+  color: var(--text-faint); font-size: 12px; line-height: 1.65; }
+.ab-notice p { margin: 0 0 8px; }
+.ab-notice ul { margin: 0; padding-left: 18px; }
 .ab-notice strong { color: var(--text-muted); font-weight: 600; }
 .ab-notice a { color: var(--steel); text-decoration: none; }
 .ab-notice a:hover { text-decoration: underline; }
+.ab-footer { margin-top: 64px; padding-top: 18px; border-top: 1px solid var(--border-soft); color: var(--text-faint);
+  font: 10.5px var(--mono); }
 
 @keyframes ab-drift { to { transform: translate(6%, 18px) scale(1.06); } }
 
-@media (max-width: 840px) {
+@media (max-width: 860px) {
   .ab-main { padding: 44px 16px 36px; }
-  .ab-steps { grid-template-columns: 1fr 1fr; }
+  .ab-cycle-body { grid-template-columns: 1fr; gap: 28px; }
+  .ab-ring { max-width: 340px; margin: 0 auto; }
 }
 @media (max-width: 520px) {
-  .ab-steps { grid-template-columns: 1fr; gap: 20px; }
-  .ab-story .ab-lead { font-size: 16.5px; }
+  .ab-lead { font-size: 15.5px; }
+  .ab-title br { display: none; }
+  .ab-ring { max-width: 270px; }  /* room for the side labels inside a phone's width */
 }
 @media (prefers-reduced-motion: reduce) {
-  .ab-main::before, .ab-main *, .ab-pulse { animation: none !important; }
+  .ab-main::before, .ab-main *, .ab-pulse { animation: none !important; transition: none !important; }
 }
