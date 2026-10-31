@@ -111,6 +111,11 @@ def credentials(profile: TargetProfile) -> dict[str, str]:
     return {agent: SHARED_CREDENTIAL for agent in sorted(profile.agents)}
 
 
+# An invoice's sender gets back only the recorded invoice, never an agent's own words, so a request for an agent's
+# prompt or credentials sent by email has no reply to land in. (The supplier portal answers in the agent's words.)
+SENDER_SEES_AGENT_REPLY = False
+
+
 def caller_scope() -> dict[str, Any]:
     """The operator's tenancy facts for P16: the supplier portal answers one vendor per request, framed by
     LedgerPilot's own API as ``Vendor #<id> asks: ...``, and each table here says whose row it is in one column.

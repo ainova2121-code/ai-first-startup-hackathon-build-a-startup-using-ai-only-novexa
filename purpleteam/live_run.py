@@ -44,7 +44,8 @@ from purpleteam.run_history import Run, RunStore
 from purpleteam.run_control import RunControl
 from purpleteam.hardening_scan import CompositeScanner, PromptHardeningScanner
 from purpleteam.sast import BanditScanner
-from purpleteam.targets.ledgerpilot import LedgerPilotTarget, caller_scope, credentials, discover_profile, reload_source
+from purpleteam.targets.ledgerpilot import (
+    SENDER_SEES_AGENT_REPLY, LedgerPilotTarget, caller_scope, credentials, discover_profile, reload_source)
 
 MODES = ("static", "full", "advanced")
 
@@ -259,10 +260,9 @@ async def assess(run: Run, runs: RunStore | None, snapshots: SourceSnapshots, pu
         elif attack_type == "obfuscation":
             templates = [AttackTemplate("obfuscation:canary-action", "obfuscation",
                                         action_objective(profile.dangerous_tools))]
-        elif attack_type == "full":  # the custom-dataset suite, then context-aware + adaptive attacks on top
-            templates = model_free_attacks(profile) + identity_attacks()
-        elif ONLY_STATIC:
-            templates = model_free_attacks(profile) + identity_attacks()
+        elif attack_type == "full" or ONLY_STATIC:  # the custom-dataset suite (full adds context-aware + adaptive)
+            templates = model_free_attacks(profile) + identity_attacks(  # only identity attacks that could breach
+                permissions_declared=manifest is not None, replies_seen=SENDER_SEES_AGENT_REPLY)
         elif advanced:
             templates = None
         else:

@@ -39,11 +39,20 @@ def identity_corpus(templates: dict[str, str] = PYRIT_TEMPLATES) -> list[AttackT
     return corpus
 
 
-def identity_attacks(templates: dict[str, str] = _INJECTION_TEMPLATES) -> list[AttackTemplate]:
+def identity_attacks(templates: dict[str, str] = _INJECTION_TEMPLATES, *, permissions_declared: bool = True,
+                     replies_seen: bool = True) -> list[AttackTemplate]:
     """The identity objectives as an assessment sends them, filed under their own technique so they are reported apart
     from the generic jailbreaks, and a credential request under one whose replies are withheld from display. Only the
     prompt-injection templates by default: these objectives are themselves authority and role claims, and the DAN/AIM
-    wrappers state their intent outright, which the action-objective corpus already measures."""
-    return [AttackTemplate(t.id, CREDENTIAL_TECHNIQUE if t.id.split(":", 1)[0] in _DISCLOSURE_OBJECTIVES
-                           else IDENTITY_TECHNIQUE, t.body)
-            for t in identity_corpus(templates)]
+    wrappers state their intent outright, which the action-objective corpus already measures.
+
+    Only objectives some oracle could see breach are sent, so a "held" is never a test that could not fail. Acting
+    beyond a role shows only against declared permissions (``permissions_declared``: the scope oracle is on), and a
+    credential or prompt request only where the attacker reads the agent's own reply (``replies_seen``)."""
+    attacks = []
+    for template in identity_corpus(templates):
+        disclosure = template.id.split(":", 1)[0] in _DISCLOSURE_OBJECTIVES
+        if replies_seen if disclosure else permissions_declared:
+            attacks.append(AttackTemplate(template.id, CREDENTIAL_TECHNIQUE if disclosure else IDENTITY_TECHNIQUE,
+                                          template.body))
+    return attacks
