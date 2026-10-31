@@ -1,0 +1,75 @@
+/* Console header: brand, target and pages on one row; every run control on one aligned toolbar below it.
+   Tokens come from app.css; this only lays the header out and gives its controls one height and one rhythm. */
+.topbar.console-header { display: block; padding: 0; }
+.topbar-row { display: flex; align-items: center; gap: 20px; padding: 12px 28px; }
+.brand-block { display: flex; align-items: center; gap: 14px; min-width: 0; }
+.brand-block .chip { max-width: 280px; overflow: hidden; text-overflow: ellipsis; }
+
+.console-header .tabs { gap: 2px; margin-left: auto; padding: 3px; border: 1px solid var(--border-soft);
+  border-radius: 10px; background: rgba(15,20,28,.8); }
+.console-header .tabs a { display: inline-flex; flex: none; align-items: center; padding: 6px 12px; border: 0;
+  border-radius: 7px; font-size: 12.5px; white-space: nowrap; transition: color .15s ease, background .15s ease; }
+.console-header .tabs a.active { background: var(--raised); box-shadow: inset 0 0 0 1px var(--border), 0 1px 0 rgba(255,255,255,.03); }
+.console-header .btn.logout { position: static; flex: none; padding: 6px 12px; border-color: var(--border);
+  background: transparent; font-size: 12.5px; font-weight: 500; }
+
+.toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 16px; padding: 10px 28px;
+  border-top: 1px solid var(--border-soft); background: linear-gradient(180deg, rgba(19,26,36,.5), rgba(10,13,19,0)); }
+.tb-group { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.tb-mode { flex: 1 1 auto; }
+.tb-actions { margin-left: auto; gap: 10px; }
+.tb-label { margin-right: 2px; color: var(--text-faint); font: 600 10px var(--mono); letter-spacing: .12em;
+  text-transform: uppercase; }
+.tb-sep { width: 1px; height: 22px; background: var(--border); }
+
+/* one height, one radius for every control on the toolbar */
+.toolbar .picker, .toolbar .btn, .toolbar .chip, .tb-link { box-sizing: border-box; height: 32px; }
+.toolbar .picker { appearance: none; -webkit-appearance: none; max-width: 240px; padding: 0 30px 0 11px;
+  border-color: var(--border); border-radius: 8px; background-color: var(--panel-alt); font-size: 12.5px; cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none' stroke='%238A94A4' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M1 1l4 4 4-4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 11px center; text-overflow: ellipsis;
+  transition: border-color .15s ease; }
+.toolbar .picker:hover:not(:disabled) { border-color: #2E3A4B; }
+.toolbar .picker:focus-visible, .toolbar .btn:focus-visible, .tb-link:focus-visible {
+  outline: 2px solid rgba(76,147,236,.55); outline-offset: 1px; }
+.toolbar .picker:disabled { opacity: .5; cursor: default; }
+.tb-run { width: 210px; }
+.toolbar .chip { padding: 0 11px; }
+.toolbar .btn { display: inline-flex; align-items: center; padding: 0 14px; border-radius: 8px; font-size: 12.5px;
+  white-space: nowrap; }
+.toolbar .btn:not(:disabled) { cursor: pointer; }
+.tb-link { display: inline-flex; align-items: center; padding: 0 4px; color: var(--steel); font-size: 12.5px;
+  font-weight: 500; text-decoration: none; white-space: nowrap; }
+.tb-link:hover { text-decoration: underline; }
+
+.btn.ghost { border-color: transparent; background: transparent; color: var(--text-muted); font-weight: 500; }
+.btn.ghost:not(:disabled):hover { background: var(--panel-alt); color: var(--text); }
+.toolbar .btn.primary { padding: 0 18px; box-shadow: 0 6px 20px rgba(76,147,236,.28);
+  transition: box-shadow .15s ease, transform .15s ease; }
+.toolbar .btn.primary:not(:disabled):hover { transform: translateY(-1px); box-shadow: 0 8px 26px rgba(76,147,236,.4); }
+.toolbar .btn.primary:disabled { box-shadow: none; }
+
+/* pause / resume / stop: one segmented control */
+.seg { display: inline-flex; overflow: hidden; border: 1px solid var(--border); border-radius: 8px; background: var(--panel-alt); }
+.seg .btn { height: 30px; border: 0; border-radius: 0; background: transparent; font-weight: 500; }
+.seg .btn + .btn { border-left: 1px solid var(--border); }
+.seg .btn:not(:disabled):hover { background: var(--raised); }
+.seg .btn.danger { color: #F0A3A0; }
+.seg .btn.danger:not(:disabled):hover { background: var(--crimson-dim); }
+
+@media (max-width: 1180px) {
+  .topbar-row { flex-wrap: wrap; row-gap: 10px; }
+  .console-header .tabs { order: 3; width: 100%; margin-left: 0; overflow-x: auto; flex-wrap: nowrap; }
+  .console-header .btn.logout { margin-left: auto; }
+}
+@media (max-width: 640px) {
+  .topbar-row, .toolbar { padding-right: 16px; padding-left: 16px; }
+  .tb-sep { display: none; }
+  .tb-group { width: 100%; }
+  .tb-mode { flex-wrap: wrap; }
+  .tb-mode .tb-label { width: 100%; }
+  .toolbar .picker { flex: 1 1 140px; min-width: 0; max-width: none; }
+  .tb-actions { flex-wrap: wrap; margin-left: 0; }
+  .tb-actions .btn.primary { flex: 1; justify-content: center; }
+  .tb-run { width: auto; }
+}

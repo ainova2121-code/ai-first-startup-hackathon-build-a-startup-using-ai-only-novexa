@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/app.css?v=51">
+<link rel="stylesheet" href="/static/header.css?v=1">
 <link rel="stylesheet" href="/static/ledger.css?v=43">
 <link rel="stylesheet" href="/static/discovery.css?v=44">
 <link rel="stylesheet" href="/static/database.css?v=3">
@@ -17,7 +18,6 @@
   .tabs a.disabled { pointer-events: none; opacity: .38; }
   .quick-scan { display: inline-flex; align-items: center; gap: 6px; }
   .quick-scan input { margin: 0; }
-  .dataset-json-link { text-decoration: none; white-space: nowrap; }
   /* Database page: mark in red what the run changed vs the seeded baseline (see database.js). */
   #dbTableBody td.db-cell-changed { background: rgba(226,85,85,.14); }
   #dbTableBody td.db-cell-changed .db-cell { color: #e25555; font-weight: 600; }
@@ -82,59 +82,70 @@
 </style>
 </head>
 <body>
-<header class="topbar">
-  <div class="cluster">
-    <div class="brand"><span class="brand-mark"></span>purpleteam</div>
-    <span id="targetChip" class="chip"><span class="dot"></span>target not yet discovered</span>
+<header class="topbar console-header">
+  <div class="topbar-row">
+    <div class="brand-block">
+      <div class="brand"><span class="brand-mark"></span>purpleteam</div>
+      <span id="targetChip" class="chip"><span class="dot"></span>target not yet discovered</span>
+    </div>
+    <nav class="tabs" aria-label="Pages">
+      <a id="liveRunTab" href="#/run" data-route="run" aria-label="Live run">
+        <span id="liveRunStatus" class="run-tab-status hidden" aria-hidden="true"></span><span>Live run</span>
+      </a>
+      <a href="#/discovery" data-route="discovery">Discovery</a>
+      <a href="#/database" data-route="database"><span class="db-nav-icon" aria-hidden="true">▦</span>Database</a>
+      <a href="#/inquiry" data-route="inquiry">Inquiry</a>
+      <a href="#/files" data-route="files">Patched files <span id="filesCount" class="count hidden"></span></a>
+      <a href="#/drift" data-route="drift">Decision drift</a>
+      <a href="#/ledger" data-route="ledger">Audit ledger</a>
+    </nav>
+    <button id="logoutBtn" class="btn logout" type="button" title="Restore every patched file to its original state and end this demo session">Log out</button>
   </div>
-  <nav class="tabs" aria-label="Pages">
-    <a id="liveRunTab" href="#/run" data-route="run" aria-label="Live run">
-      <span id="liveRunStatus" class="run-tab-status hidden" aria-hidden="true"></span><span>Live run</span>
-    </a>
-    <a href="#/discovery" data-route="discovery">Discovery</a>
-    <a href="#/database" data-route="database"><span class="db-nav-icon" aria-hidden="true">▦</span>Database</a>
-    <a href="#/inquiry" data-route="inquiry">Inquiry</a>
-    <a href="#/files" data-route="files">Patched files <span id="filesCount" class="count hidden"></span></a>
-    <a href="#/drift" data-route="drift">Decision drift</a>
-    <a href="#/ledger" data-route="ledger">Audit ledger</a>
-  </nav>
-  <div class="cluster">
-    <label class="faint" for="runPicker">Run</label>
-    <select id="runPicker" class="picker"><option value="live">Current run</option></select>
-    <span id="runChip" class="chip">idle</span>
-    <button id="restoreBtn" class="btn" title="Put every file the platform edited back to its original bytes">
-      Restore original files<span id="modifiedCount" class="count hidden"></span>
-    </button>
-    <label class="faint" for="runSuite">Mode</label>
-    <select id="runSuite" class="picker" aria-label="Assessment mode">
-      <option value="custom">Custom dataset</option>
-      <option value="pyrit">PyRIT advanced attacks</option>
-      <option value="full">Full assessment</option>
-    </select>
-    <select id="customSuite" class="picker" aria-label="Custom dataset suite">
-      <option value="all">Full dataset</option>
-      <option value="corpus">Jailbreak / injection seed corpus</option>
-      <option value="obfuscation">Obfuscation suite (5 variants + baseline)</option>
-    </select>
-    <a id="datasetJsonLink" class="btn dataset-json-link hidden" href="/custom-dataset.json" target="_blank" rel="noopener noreferrer">View full dataset JSON ↗</a>
-    <select id="pyritStrategy" class="picker hidden" aria-label="PyRIT strategy">
-      <option value="tap">PyRIT TAP</option>
-      <option value="pair">PyRIT PAIR</option>
-      <option value="crescendo">PyRIT Crescendo</option>
-      <option value="redteam">PyRIT Red Team</option>
-    </select>
-    <select id="attackerModel" class="picker hidden" aria-label="Attacker model"></select>
-    <!-- The static inspection (posture, source scan, prompt rules, catalog fixes) runs automatically during
-         discovery on every run, so the manual toggle is hidden. The backend ``static`` mode is kept for API use. -->
-    <label class="quick-scan hidden" title="Seconds · inspection only: discovery, posture, source scan, prompt rules, catalog fixes. No attacks, no release verdict.">
-      <input type="checkbox" id="quickScan"> Quick scan (no attacks)
-    </label>
-    <button id="startBtn" class="btn primary">Start run</button>
-    <button id="pauseBtn" class="btn" type="button" disabled title="Pause after the current request or attack step">Pause</button>
-    <button id="resumeBtn" class="btn" type="button" disabled title="Continue a paused run">Resume</button>
-    <button id="stopBtn" class="btn danger" type="button" disabled title="Stop this run; its partial evidence is kept and cannot be resumed">Stop</button>
+  <div class="toolbar" role="toolbar" aria-label="Run controls">
+    <div class="tb-group">
+      <label class="tb-label" for="runPicker">Run</label>
+      <select id="runPicker" class="picker tb-run"><option value="live">Current run</option></select>
+      <span id="runChip" class="chip">idle</span>
+    </div>
+    <span class="tb-sep" aria-hidden="true"></span>
+    <div class="tb-group tb-mode">
+      <label class="tb-label" for="runSuite">Mode</label>
+      <select id="runSuite" class="picker" aria-label="Assessment mode">
+        <option value="custom">Custom dataset</option>
+        <option value="pyrit">PyRIT advanced attacks</option>
+        <option value="full">Full assessment</option>
+      </select>
+      <select id="customSuite" class="picker" aria-label="Custom dataset suite">
+        <option value="all">Full dataset</option>
+        <option value="corpus">Jailbreak / injection seed corpus</option>
+        <option value="obfuscation">Obfuscation suite (5 variants + baseline)</option>
+      </select>
+      <a id="datasetJsonLink" class="tb-link dataset-json-link hidden" href="/custom-dataset.json" target="_blank" rel="noopener noreferrer" title="View the full dataset as JSON">Dataset JSON ↗</a>
+      <select id="pyritStrategy" class="picker hidden" aria-label="PyRIT strategy">
+        <option value="tap">PyRIT TAP</option>
+        <option value="pair">PyRIT PAIR</option>
+        <option value="crescendo">PyRIT Crescendo</option>
+        <option value="redteam">PyRIT Red Team</option>
+      </select>
+      <select id="attackerModel" class="picker hidden" aria-label="Attacker model"></select>
+      <!-- The static inspection (posture, source scan, prompt rules, catalog fixes) runs automatically during
+           discovery on every run, so the manual toggle is hidden. The backend ``static`` mode is kept for API use. -->
+      <label class="quick-scan hidden" title="Seconds · inspection only: discovery, posture, source scan, prompt rules, catalog fixes. No attacks, no release verdict.">
+        <input type="checkbox" id="quickScan"> Quick scan (no attacks)
+      </label>
+    </div>
+    <div class="tb-group tb-actions">
+      <button id="restoreBtn" class="btn ghost" title="Put every file the platform edited back to its original bytes">
+        Restore files<span id="modifiedCount" class="count hidden"></span>
+      </button>
+      <div class="seg" role="group" aria-label="Run state">
+        <button id="pauseBtn" class="btn" type="button" disabled title="Pause after the current request or attack step">Pause</button>
+        <button id="resumeBtn" class="btn" type="button" disabled title="Continue a paused run">Resume</button>
+        <button id="stopBtn" class="btn danger" type="button" disabled title="Stop this run; its partial evidence is kept and cannot be resumed">Stop</button>
+      </div>
+      <button id="startBtn" class="btn primary">Start run</button>
+    </div>
   </div>
-  <button id="logoutBtn" class="btn logout" type="button" title="Restore every patched file to its original state and end this demo session">Log out</button>
 </header>
 
 <main>
