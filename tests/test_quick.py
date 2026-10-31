@@ -65,5 +65,6 @@ def test_the_run_endpoint_refuses_an_unknown_mode(tmp_path):
     from purpleteam.codemods.restore import SourceSnapshots
     from purpleteam.run_history import RunStore
 
-    client = TestClient(live_demo.create_app(SourceSnapshots(tmp_path / "s.json"), tmp_path, RunStore(tmp_path / "runs")))
+    client = TestClient(live_demo.create_app(SourceSnapshots(tmp_path / "s.json"), tmp_path, RunStore(tmp_path / "runs"),
+                                             login=False))
     assert client.post("/run?mode=everything").status_code == 422

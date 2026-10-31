@@ -60,3 +60,11 @@ def test_logout_clears_the_session_and_restores_the_target(tmp_path):
     assert response.status_code == 200 and "mod.py" in response.json()["restored"]
     assert (repo / "mod.py").read_bytes() == b"original\n"  # patches rolled back to the original state
     assert client.get("/runs").status_code == 401  # the session is over
+
+
+def test_the_app_starts_on_the_login_page_by_default_however_it_is_created(tmp_path):
+    app = live_demo.create_app(SourceSnapshots(tmp_path / "snapshots.json"), tmp_path / "ledgerpilot",
+                               RunStore(tmp_path / "runs"))  # no login argument: the default must be the login page
+    client = _client(tmp_path, app)
+    assert client.get("/", follow_redirects=False).headers["location"] == "/login"
+    assert client.get("/runs").status_code == 401

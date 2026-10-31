@@ -86,7 +86,9 @@ class _RunState:
 
 
 def create_app(snapshots: SourceSnapshots | None = None, target_repo: Path = TARGET_REPO,
-               runs: RunStore | None = None, login: bool = False) -> FastAPI:
+               runs: RunStore | None = None, login: bool = True) -> FastAPI:
+    """The live demo app, behind the demo login by default -- however it is started (``app`` or ``create_app``),
+    the sign-in page comes first. Only tests that exercise the routes themselves pass ``login=False``."""
     state = _RunState()
     snapshots = snapshots or SourceSnapshots(OPERATOR_DIR / "source_snapshots.json")
     runs = runs or RunStore(OPERATOR_DIR / "runs")

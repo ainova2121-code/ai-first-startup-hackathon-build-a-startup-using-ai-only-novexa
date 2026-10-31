@@ -21,7 +21,7 @@ def _no_real_reload(monkeypatch):
 
 def _app(tmp_path, repo=None):
     return live_demo.create_app(SourceSnapshots(tmp_path / "snapshots.json"), repo or tmp_path / "ledgerpilot",
-                                RunStore(tmp_path / "runs"))
+                                RunStore(tmp_path / "runs"), login=False)
 
 
 def _client(tmp_path) -> TestClient:
@@ -72,7 +72,7 @@ def test_restore_puts_every_edited_target_file_back_in_one_step(tmp_path):
     (repo / "db" / "repositories.py").write_bytes(b"patched\n")  # exactly what the platform wrote
     snapshots = SourceSnapshots(tmp_path / "snapshots.json")
     snapshots.record("db/repositories.py", "original\n", "patched\n")
-    client = TestClient(live_demo.create_app(snapshots, repo, RunStore(tmp_path / "runs")))
+    client = TestClient(live_demo.create_app(snapshots, repo, RunStore(tmp_path / "runs"), login=False))
 
     assert client.get("/source-status").json() == {"modified": ["ledgerpilot/db/repositories.py"]}
     body = client.post("/restore").json()
