@@ -10,7 +10,7 @@ from purpleteam.adapter import Observation
 from purpleteam.assessment import Assessment
 from purpleteam.audit.ledger import AuditLedger
 from purpleteam.patches.base import Blocked, Patch
-from test_assessment import ATTACK, ORACLE, PROFILE, _Agent
+from test_assessment import ATTACK, LEGIT_ACCOUNT, ORACLE, PROFILE, _Agent
 
 LEGIT = "Look up acme"
 
@@ -82,3 +82,29 @@ def test_legit_work_is_checked_alone_first_so_the_attacks_are_replayed_once_not_
     assert [e["type"] for e in seen if e.get("technique") == "reverify"].count("attack_start") == 1  # one replay pass
     assert [e["payload"]["reason"] for e in ledger.events() if e["kind"] == "narrow"] == [
         "blocked legitimate work in a legit check, before any replay"]
+
+
+class _DerailedAgent(_Agent):
+    """When its input is refused, it falls back to rewriting the vendor -- a call another patch then rightly stops."""
+
+    def send(self, request: str) -> Observation:
+        if self._guard:
+            try:
+                self._guard.screen("vendor", request, "input")
+            except Blocked:
+                return self._write(LEGIT_ACCOUNT)
+        return super().send(request)
+
+
+def test_only_the_patch_that_derailed_legit_work_is_dropped_not_the_one_that_then_stopped_it(tmp_path, monkeypatch):
+    """Found live: P2 refused the supplier portal's own query results, the agent retried with a broader query, and
+    P16 rightly stopped that -- dropping both lost the tenancy guard. Dropping P2 alone lets the work through."""
+    monkeypatch.setitem(__import__("purpleteam.patches.catalog", fromlist=["x"]).FINDING_PATCHES,
+                        "injection_action", ["P2", "P8"])
+    monkeypatch.setattr("purpleteam.defender.selector.InjectionScanner", _classifier(["acme"]))
+    monkeypatch.setattr("purpleteam.defender.selector.injection_backend_available", lambda: True)
+    assessment = Assessment(lambda guard: _DerailedAgent(guard), ORACLE, PROFILE, AuditLedger(tmp_path / "a.jsonl"),
+                            legit=[(LEGIT, lambda obs: True)])
+    report = asyncio.run(assessment.run([ATTACK], exposure_first=True))
+    assert report.excluded == frozenset({"P2"}) and "P8" in report.defense.patch_ids
+    assert report.verification.attack_blocked and report.verification.legit_passed

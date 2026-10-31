@@ -115,6 +115,9 @@ def credentials(profile: TargetProfile) -> dict[str, str]:
 # An invoice's sender gets back only the recorded invoice, never an agent's own words, so a request for an agent's
 # prompt or credentials sent by email has no reply to land in. (The supplier portal answers in the agent's words.)
 SENDER_SEES_AGENT_REPLY = False
+# A request opening with this goes to the supplier portal instead of the invoice inbox, so one dataset can attack
+# both entry points -- and a re-attack, which replays the exact text, reaches the same one.
+PORTAL = "[supplier portal] "
 
 
 def caller_scope() -> dict[str, Any]:
@@ -278,8 +281,9 @@ class LedgerPilotTarget:
         self._sink.calls.clear()
         self._sink.attempts.clear()
         self._sink.agent_replies.clear()
-        if self._channel == "inquiry":
-            response = self._client.post("/inquiries", json={"vendor_id": self._vendor_id, "question": request})
+        if self._channel == "inquiry" or request.startswith(PORTAL):
+            question = request.removeprefix(PORTAL)
+            response = self._client.post("/inquiries", json={"vendor_id": self._vendor_id, "question": question})
         else:
             response = self._client.post(
                 "/invoices",

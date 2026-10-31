@@ -77,6 +77,11 @@ class DefensePass:
             level, excluded, narrowed = 0, frozenset(), False
             if payloads and self._legit:
                 culprits = attempt(level, excluded, legit_only=True)[2]
+                # Drop the fewest patches: one that breaks legitimate work can derail it into a call another patch
+                # then rightly stops, so each culprit is first tried alone before all of them are dropped.
+                alone = next((c for c in sorted(culprits) if len(culprits) > 1
+                              and not attempt(level, frozenset({c}), legit_only=True)[2]), None)
+                culprits = {alone} if alone else culprits
                 if control is not None and control.stop_requested:
                     return None
                 if culprits:

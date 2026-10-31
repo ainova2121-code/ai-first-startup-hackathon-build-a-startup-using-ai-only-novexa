@@ -60,6 +60,7 @@ const KINDS = {
   "trigger-condition": "Targeted · crafted from each agent's own prompt",
   tap: "Adaptive search · TAP",
   pair: "Adaptive search · PAIR",
+  "data-exfiltration": "Data exfiltration · supplier portal",
   "code-reverify": "Reverification",
   reverify: "Reverification",
 };

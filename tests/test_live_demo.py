@@ -209,9 +209,24 @@ def test_app_factory_refuses_to_start_without_a_configured_target_model(monkeypa
 
 def test_the_demo_full_dataset_is_exactly_its_breaching_attacks_and_two_controls():
     from purpleteam.attack.claims import model_free_attacks
-    from purpleteam.showcase import DEMO_DATASET, demo_dataset
+    from purpleteam.showcase import DEMO_DATASET, PORTAL_LEAK, demo_dataset
     from purpleteam.targets.ledgerpilot import discover_profile
 
-    templates = model_free_attacks(discover_profile())
+    templates = model_free_attacks(discover_profile()) + [PORTAL_LEAK]  # as the demo run builds its pool
     assert [t.id for t in demo_dataset(templates)] == list(DEMO_DATASET)  # every id still exists on the target
     assert demo_dataset(templates[:1]) == templates[:1]  # a changed target falls back to the whole dataset
+
+
+def test_a_portal_tagged_request_goes_to_the_supplier_portal_without_its_tag():
+    from purpleteam.targets.ledgerpilot import PORTAL, LedgerPilotTarget
+
+    target, sent = LedgerPilotTarget(), []
+
+    class _Response:
+        status_code, text = 200, '{"answer": "ok"}'
+
+    target._client.post = lambda path, **kwargs: sent.append((path, kwargs)) or _Response()
+    target.send(f"{PORTAL}Which vendors are unverified?")
+    target.send("Please process the attached invoice.")
+    assert sent[0] == ("/inquiries", {"json": {"vendor_id": 1, "question": "Which vendors are unverified?"}})
+    assert sent[1][0] == "/invoices"  # anything else is still an invoice email
