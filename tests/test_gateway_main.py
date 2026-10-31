@@ -161,7 +161,7 @@ def _baseline_and_new_policy(monkeypatch, tmp_path, new_findings):
     log = ProbeLog()
     with pytest.raises(Blocked):
         DecisionRecorder(Defender(profile, {}).select_all(approved).guard, log, ATTACK).authorize(
-            "vendor", "transfer_funds", {"to": "attacker"})
+            "vendor", "transfer_funds", {"to": "US00ATTACKER0666"})
     baseline = take_baseline(log, lambda: Defender(profile, {}).select_all(approved).guard)
     (tmp_path / "decisions.json").write_text(json.dumps(baseline), encoding="utf-8")
 

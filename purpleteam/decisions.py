@@ -8,9 +8,10 @@ edited manifest, or a what-if without one patch -- shows exactly which decisions
 
 A guard decision is a pure function of the policy and its inputs, so a replay needs no model and no
 target: the same inputs give the same answer, and a flip is a real change, never sampling noise. Each
-probe is decided by a freshly built guard, so a stateful patch (a loop budget, a review queue) never
-carries one probe's state into the next. Inputs can hold target data, so the probes stay in the
-operator's own run folder; the signed ledger holds only counts, keys and the digest that pins them.
+probe is decided by a freshly built guard that is first shown every decision made before it in the same
+request, so a stateful patch (P14's memory of outside content, a caller binding, a loop budget) decides
+exactly as it did live, and nothing carries from one request into the next. Inputs can hold target data,
+so the probes stay in the operator's own run folder; the signed ledger holds only counts, keys and the digest that pins them.
 """
 
 from __future__ import annotations
@@ -18,11 +19,14 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import Any, Callable
 
 from purpleteam.audit.hashing import canonical
+from purpleteam.oracle import ALL_CANARIES, HONEYTOKEN
 from purpleteam.patches.base import Blocked, CompositeGuard, HoldForReview
+
+PLANTED = ALL_CANARIES | {HONEYTOKEN}  # the values only an attack (or a leak of the decoy) puts into a tool call
 
 ALLOW, MODIFY, HOLD, BLOCK, ERROR = "allow", "modify", "hold", "block", "error"
 _STRENGTH = {ALLOW: 0, MODIFY: 1, HOLD: 2, BLOCK: 3, ERROR: 3}  # how much each outcome restrains
@@ -43,10 +47,19 @@ class Probe:
     args: str = ""  # canonical JSON, so a probe is hashable and replays byte-for-byte
     text: str = ""
     source: str = ""
+    context: tuple[str, ...] = ()  # an authorize's history: the keys of every decision before it in its request
 
     @property
     def key(self) -> str:
-        return hashlib.sha256(canonical(asdict(self))).hexdigest()[:16]
+        fields = asdict(self)
+        if not self.context:  # so a probe with no history keeps the key it had before histories were recorded
+            del fields["context"]
+        return hashlib.sha256(canonical(fields)).hexdigest()[:16]
+
+    @property
+    def content_key(self) -> str:
+        """The key of the inputs alone, whatever came before them."""
+        return replace(self, context=()).key
 
     def label(self) -> str:
         if self.check == "authorize":
@@ -87,6 +100,11 @@ class ProbeLog:
         with self._lock:
             return list(self._probes.values())
 
+    def get(self, key: str) -> Probe | None:
+        with self._lock:
+            entry = self._probes.get(key)
+            return entry[0] if entry else None
+
 
 class DecisionRecorder:
     """A Guard that hands every call straight to ``guard`` and records its inputs. It never changes a
@@ -94,17 +112,19 @@ class DecisionRecorder:
 
     def __init__(self, guard: Any, log: ProbeLog, origin: str) -> None:
         self._guard, self._log, self._origin = guard, log, origin
+        self._seen: list[str] = []  # every decision so far in this request, in order: one recorder per request
 
     def screen(self, agent: str, text: str, source: str) -> str:
         probe = Probe("screen", agent, text=text, source=source)
         return self._decided(probe, lambda: self._guard.screen(agent, text, source))
 
     def authorize(self, agent: str, tool: str, args: dict[str, Any]) -> None:
-        probe = Probe("authorize", agent, tool, canonical(args).decode("utf-8"))
+        probe = Probe("authorize", agent, tool, canonical(args).decode("utf-8"), context=tuple(self._seen))
         return self._decided(probe, lambda: self._guard.authorize(agent, tool, args))
 
     def _decided(self, probe: Probe, call: Callable[[], Any]) -> Any:
         self._log.add(probe, self._origin)
+        self._seen.append(probe.key)
         try:
             return call()
         except Blocked as stopped:  # noted, then raised exactly as before: the decision is never changed
@@ -115,9 +135,17 @@ class DecisionRecorder:
         return getattr(self._guard, name)
 
 
-def decide(guard: CompositeGuard, probe: Probe) -> tuple[str, str]:
+Resolve = Callable[[str], Probe | None]
+
+
+def decide(guard: CompositeGuard, probe: Probe, resolve: Resolve | None = None) -> tuple[str, str]:
     """(outcome, the patch id(s) that decided it), walking the guard's patches in order exactly as
-    ``CompositeGuard`` does, so the patch responsible for each decision is named."""
+    ``CompositeGuard`` does, so the patch responsible for each decision is named. The guard is first shown the
+    probe's history (``resolve`` finds each earlier decision by its key), in order, as it was live."""
+    for key in probe.context:
+        earlier = resolve(key) if resolve else None
+        if earlier is not None:
+            _show(guard, earlier)
     if probe.check == "authorize":
         args = json.loads(probe.args or "{}")
         for patch in guard.patches:
@@ -144,11 +172,26 @@ def decide(guard: CompositeGuard, probe: Probe) -> tuple[str, str]:
     return (MODIFY, ",".join(changed_by)) if changed_by else (ALLOW, "")
 
 
+def _show(guard: CompositeGuard, probe: Probe) -> None:
+    """Pass an earlier decision through the guard, exactly as the live request did; its outcome is not the point."""
+    try:
+        if probe.check == "authorize":
+            guard.authorize(probe.agent, probe.tool, json.loads(probe.args or "{}"))
+        else:
+            guard.screen(probe.agent, probe.text, probe.source)
+    except Exception:  # an earlier call the guard stopped was still seen by it, as it was live
+        pass
+
+
+def _probe(data: dict) -> Probe:
+    return Probe(**{**data, "context": tuple(data.get("context", ()))})
+
+
 def take_baseline(log: ProbeLog, factory: GuardFactory, policy: list | None = None) -> dict:
     """What the approved policy decides for every recorded input, pinned by a digest."""
     probes = []
     for probe, origins in sorted(log.items(), key=lambda item: item[0].key):
-        outcome, by = decide(factory(), probe)
+        outcome, by = decide(factory(), probe, log.get)
         probes.append({"key": probe.key, "probe": asdict(probe), "origins": sorted(origins),
                        "outcome": outcome, "by": by})
     return {"version": 1, "policy": policy or [], "probes": probes, "dropped": log.dropped,
@@ -164,19 +207,45 @@ def check_baseline(data: Any) -> dict:
     return data
 
 
-def compare(baseline: dict, factory: GuardFactory) -> list[dict]:
-    """Every recorded decision the given policy would now make differently, most severe first."""
+def compare(baseline: dict, factory: GuardFactory, current: dict | None = None) -> list[dict]:
+    """Every recorded decision the given policy would now make differently, most severe first. ``current`` is the
+    given policy's own pinned decisions from its verified run, for a baseline recorded before histories were."""
+    entries = check_baseline(baseline)["probes"]
+    recorded = {entry["key"]: _probe(entry["probe"]) for entry in entries}
+    seen_now = _by_content(current)
     flips = []
-    for entry in check_baseline(baseline)["probes"]:
-        probe = Probe(**entry["probe"])
-        outcome, by = decide(factory(), probe)
+    for entry in entries:
+        probe = recorded[entry["key"]]
+        outcome, by = _decided_now(probe, set(entry["origins"]), recorded.get, seen_now, factory)
         if outcome == entry["outcome"]:
             continue
-        severity, why = _judge(set(entry["origins"]), entry["outcome"], outcome)
+        severity, why = _judge(_attack_input(probe, set(entry["origins"])), set(entry["origins"]), entry["outcome"],
+                               outcome)
         flips.append({"key": entry["key"], "label": probe.label(), "check": probe.check, "agent": probe.agent,
                       "tool": probe.tool, "origins": entry["origins"], "before": entry["outcome"],
                       "after": outcome, "by_before": entry["by"], "by_after": by, "severity": severity, "why": why})
     return sorted(flips, key=lambda flip: (_SEVERITY_ORDER[flip["severity"]], flip["key"]))
+
+
+def _by_content(current: dict | None) -> dict[str, list[tuple[str, str, set[str]]]]:
+    """content key -> (outcome, by, origins) of every decision the current policy made on those inputs."""
+    seen: dict[str, list[tuple[str, str, set[str]]]] = {}
+    for entry in (current or {}).get("probes", []):
+        seen.setdefault(_probe(entry["probe"]).content_key, []).append(
+            (entry["outcome"], entry["by"], set(entry["origins"])))
+    return seen
+
+
+def _decided_now(probe: Probe, origins: set[str], resolve: Resolve, seen_now: dict, factory: GuardFactory
+                 ) -> tuple[str, str]:
+    """How the given policy decides ``probe``: replayed after its own history. A tool call recorded before histories
+    were has none to replay, which a stateful patch (P14) needs, so it is judged by how the policy decided the same
+    inputs in its own verified run instead -- the least restrictive of those decisions, so nothing is flattered."""
+    if probe.check == "authorize" and not probe.context:
+        same = [(outcome, by) for outcome, by, seen_in in seen_now.get(probe.content_key, []) if seen_in & origins]
+        if same:
+            return min(same, key=lambda decided: _STRENGTH[decided[0]])
+    return decide(factory(), probe, resolve)
 
 
 def require_no_loosening(baseline: dict, pinned_digest: str, factory: GuardFactory) -> list[dict]:
@@ -203,9 +272,17 @@ def summarize(flips: list[dict]) -> dict[str, int]:
     return {level: sum(1 for f in flips if f["severity"] == level) for level in _SEVERITY_ORDER}
 
 
-def _judge(origins: set[str], before: str, after: str) -> tuple[str, str]:
+def _attack_input(probe: Probe, origins: set[str]) -> bool:
+    """Input a verified attack supplied: any text it sent, or a tool call carrying a value it planted. A clean call an
+    agent made in the middle of an attack (the real invoice, recorded correctly) is ordinary work, not attack input."""
+    if ATTACK not in origins:
+        return False
+    return probe.check != "authorize" or any(value in probe.args for value in PLANTED)
+
+
+def _judge(attack_input: bool, origins: set[str], before: str, after: str) -> tuple[str, str]:
     if _STRENGTH[after] < _STRENGTH[before]:  # looser
-        if ATTACK in origins:
+        if attack_input:
             return "high", (f"input from a verified attack: the approved policy decided '{before}', this policy "
                             f"decides '{after}'")
         if before == MODIFY:

@@ -121,7 +121,7 @@ class DefensePass:
         fresh = Defender(self._profile, self._facts, escalation=level, exclude=excluded).select_all(report.guarded).guard
         blocked, held, culprits = [], [], set()
         for probe, was_held in probes.stopped(LEGIT):
-            by = decide(fresh, probe)[1]  # a fresh copy names the patch without touching live review state
+            by = decide(fresh, probe, probes.get)[1]  # a fresh copy names the patch, untouched by live review state
             where = f"{probe.agent} · {probe.tool or probe.source} ({by or 'guard'})"
             (held if was_held else blocked).append(where)
             if not was_held and by:
@@ -157,7 +157,7 @@ class DefensePass:
 
     def _compare_decisions(self, report: AssessmentReport, factory: Callable[[], CompositeGuard],
                            emit: Callable[[dict], None]) -> None:
-        report.decision_drift = compare(self._decision_baseline, factory)
+        report.decision_drift = compare(self._decision_baseline, factory, report.decisions or None)
         counts = summarize(report.decision_drift)
         self._ledger.append("verifier", "decision_drift", {
             "against": self._decision_baseline["digest"], **counts,

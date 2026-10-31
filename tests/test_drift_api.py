@@ -25,7 +25,7 @@ def _client(tmp_path, *, tamper=False, policy=True):
 
     log = ProbeLog()
     try:
-        DecisionRecorder(factory(), log, ATTACK).authorize("vendor", "update_vendor_bank", {"account": "X"})
+        DecisionRecorder(factory(), log, ATTACK).authorize("vendor", "update_vendor_bank", {"account": "US00ATTACKER0666"})
     except Blocked:
         pass
     DecisionRecorder(factory(), log, LEGIT).authorize("vendor", "lookup_vendor", {"name": "acme"})
