@@ -60,4 +60,9 @@ class CompositeGuard:
 
     def authorize(self, agent: str, tool: str, args: dict[str, Any]) -> None:
         for patch in self.patches:
-            patch.authorize(agent, tool, args)
+            try:
+                patch.authorize(agent, tool, args)
+            except Blocked as error:
+                if not getattr(error, "patch_id", ""):
+                    error.patch_id = patch.id  # which catalog patch stopped the call, for the evidence a run shows
+                raise

@@ -170,6 +170,12 @@ def _failure(response: Any) -> str:
     return f"HTTP {response.status_code} from the target: its model endpoint answered {code} ({meaning})"
 
 
+def _stopped_by(error: Exception, what: str, otherwise: str) -> str:
+    """Name the defender's catalog patch that stopped a call when the guard says which one (CompositeGuard does)."""
+    patch = getattr(error, "patch_id", "")
+    return f"the defender's patch {patch} ({what})" if patch else otherwise
+
+
 class _GuardAdapter:
     """Lets the platform's own, domain-agnostic Guard attach to LedgerPilot's guard port, whose
     contract expects its own ``Blocked`` exception (see ``patches/base.py``): the one place that
@@ -189,10 +195,11 @@ class _GuardAdapter:
         try:
             self._guard.authorize(agent, tool, args)
         except HoldForReview as error:
-            self._on_stop(agent, tool, args, "a hold for human review")
+            self._on_stop(agent, tool, args, _stopped_by(error, "a hold for human review", "a hold for human review"))
             raise self._ports.ReviewRequired(str(error)) from error
         except PlatformBlocked as error:
-            self._on_stop(agent, tool, args, f"the runtime guard ({str(error)[:160]})")
+            reason = str(error)[:160]
+            self._on_stop(agent, tool, args, _stopped_by(error, reason, f"the runtime guard ({reason})"))
             raise self._ports.Blocked(str(error)) from error
 
 

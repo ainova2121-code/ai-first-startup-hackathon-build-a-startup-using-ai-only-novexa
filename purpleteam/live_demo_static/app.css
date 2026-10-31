@@ -133,6 +133,7 @@ main { padding: 22px 28px 40px; display: grid; gap: 18px; }
 .proof { margin-top: 8px; padding: 9px 11px; border-radius: 7px; background: var(--crimson-dim); color: var(--rm-text); font-size: 12.5px; }
 .proof.attempt { background: rgba(214,152,42,.12); color: var(--amber); }
 .proof.why { background: var(--panel-alt); color: var(--text-muted); }
+.proof.patched { background: var(--sage-dim); color: var(--add-text); }
 @keyframes pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(76,147,236,0.5); } 50% { box-shadow: 0 0 0 4px rgba(76,147,236,0); } }
 /* one collapsible section per kind of attack (feed.js) */
 .agroup { flex: none; border: 1px solid var(--border); border-radius: 11px; background: var(--panel); overflow: hidden; }

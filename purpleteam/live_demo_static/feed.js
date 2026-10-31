@@ -85,7 +85,8 @@ function showGroup(group) {
   group.stats.textContent = `${group.total} attack${group.total === 1 ? "" : "s"}`
     + (settled ? ` · ${group.breached} breached · ${group.held} held` : "")
     + (inconclusive > 0 ? ` · ${inconclusive} inconclusive` : "")
-    + (group.persuaded ? ` (${group.persuaded} only because a control stopped the agent)` : "");
+    + (group.persuaded ? ` (${group.persuaded} ${group.patched ? "stopped by the defender's patch"
+      : "only because a control stopped the agent"})` : "");
   // Held needs at least one attack that completed and held: a group whose attacks all failed proved nothing.
   const state = group.running ? "running" : group.breached ? "breached" : group.held ? "held" : settled ? "inconclusive" : "";
   group.state.className = `agroup-state ${state}`;
@@ -135,7 +136,8 @@ function executionTree(e) {
     el("span", "xt-cap", "QUESTION-SPECIFIC CALL MAP"),
     add(el("span", "xt-keys"), xtLegend("exec", "Executed"), xtLegend("", "Available"), xtLegend("canary", "Canary evidence"))));
 
-  const tag = e.breached ? "CANARY HIT A WRITE ACTION" : persuaded(e) ? "AGENT PERSUADED" : "ROOT";
+  const tag = e.breached ? "CANARY HIT A WRITE ACTION" : persuaded(e) ? (e.technique === "reverify"
+    ? "STOPPED BY PATCH" : "AGENT PERSUADED") : "ROOT";
   add(xt, add(el("div", `xt-root${e.breached ? " breach" : ""}`), el("span", "xt-q", "Q"),
     add(el("div", "xt-root-text"), el("div", "xt-root-title", `Attack question · ${attackKind(e.technique, e.id)}`),
         el("div", "xt-root-sub", "question enters the agent route")),
@@ -185,7 +187,8 @@ function executionTree(e) {
 
 function fmtOutcome(e) {
   if (e.outcome === "breached") return e.technique === "reverify" ? "STILL BREACHES" : "BREACHED";
-  if (persuaded(e)) return `HELD · AGENT PERSUADED ${e.persuaded}/${e.trials || e.conclusive}`;
+  if (persuaded(e)) return `HELD · ${e.technique === "reverify" ? "BY THE PATCH" : "AGENT PERSUADED"} `
+    + `${e.persuaded}/${e.trials || e.conclusive}`;
   if (e.outcome === "held") return `held ${e.conclusive}/${e.trials || e.conclusive} · ≤${Math.round(e.upper_bound * 100)}%`;
   return "inconclusive";
 }
@@ -254,7 +257,9 @@ function onAttackResult(e) {
     add(body, el("div", "label", "Target API response:"), el("pre", "reply target-api-reply", targetReply));
   }
   if (e.breached) body.appendChild(el("div", "proof", `Breach proven — ${e.detail}`));
-  else if (persuaded(e)) body.appendChild(el("div", "proof attempt", `Attempt detected — ${e.detail}`));
+  else if (persuaded(e) && e.technique === "reverify") {  // the patched agent was fooled again; the patch held
+    body.appendChild(el("div", "proof patched", `Held by the defender's patch — ${e.detail}`));
+  } else if (persuaded(e)) body.appendChild(el("div", "proof attempt", `Attempt detected — ${e.detail}`));
   else if (e.technique === "reverify") body.appendChild(el("div", "label", e.detail));
   else if (e.outcome === "inconclusive" && e.detail) {
     body.appendChild(el("div", "proof why", `Not tested — ${e.detail.replace(/^not tested:\s*/i, "")}`));
@@ -262,6 +267,7 @@ function onAttackResult(e) {
   group.running = Math.max(0, group.running - 1);
   if (e.breached) group.breached += 1; else if (e.outcome === "held") group.held += 1;
   if (persuaded(e)) group.persuaded += 1;
+  if (e.technique === "reverify") group.patched = true;
   showGroup(group);
   if (!replaying && !group.running && !group.pinned) {  // finished: fold it a moment later, unless it starts again
     setTimeout(() => { if (!group.running && !group.pinned) setOpen(group, false); }, 1500);
