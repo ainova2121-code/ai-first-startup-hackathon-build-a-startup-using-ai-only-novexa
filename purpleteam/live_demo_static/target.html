@@ -9,7 +9,7 @@
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/app.css?v=51">
 <link rel="stylesheet" href="/static/database.css?v=3">
-<link rel="stylesheet" href="/static/target.css?v=1">
+<link rel="stylesheet" href="/static/target.css?v=2">
 </head>
 <body>
 <header class="topbar">
@@ -26,7 +26,19 @@
       </div>
     </div>
     <div id="tpStats" class="db-overview"></div>
-    <div id="tpMessage" class="db-message">Reading the target's own code to find its agents and tools…</div>
+    <div id="tpScan" class="tp-scan" role="status" aria-live="polite">
+      <div class="tp-scan-head">
+        <span class="tp-scan-orb"></span>
+        <div class="tp-scan-copy">
+          <div class="tp-scan-title">Discovery agent</div>
+          <div id="tpScanStatus" class="tp-scan-status">Building the target from its own code…</div>
+        </div>
+        <span id="tpScanPct" class="tp-scan-pct">0%</span>
+      </div>
+      <div class="tp-bar"><div id="tpBarFill" class="tp-bar-fill"></div></div>
+      <ol id="tpSteps" class="tp-steps"></ol>
+      <div id="tpLog" class="tp-log"></div>
+    </div>
     <div id="tpBody" class="hidden">
       <div class="tp-section">
         <div class="tp-section-title">Agents <span>in the order the target builds them</span></div>
@@ -41,6 +53,6 @@
       <a class="tp-footer-link" href="/">Start testing →</a></div>
   </section>
 </main>
-<script src="/static/target.js?v=1"></script>
+<script src="/static/target.js?v=2"></script>
 </body>
 </html>

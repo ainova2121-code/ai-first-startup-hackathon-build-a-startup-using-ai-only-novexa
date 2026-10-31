@@ -35,11 +35,108 @@
     return card;
   }
 
+  // Discovery progress: while the server builds the target the bar only creeps (we cannot see inside that call); once
+  // the overview arrives, each later step resolves with what was really found, so nothing shown here is invented.
+  const STEPS = [["Build the target from its own code", "Building the target from its own code…"],
+    ["Find its agents", "Finding its agents…"], ["Map each agent's tools", "Mapping each agent's tools…"],
+    ["Classify what each tool can do", "Classifying what each tool can do…"],
+    ["Read the data it starts with", "Reading the data it starts with…"]];
+  const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const pause = (ms) => new Promise((resolve) => setTimeout(resolve, reducedMotion ? 0 : ms));
+
+  function scanner() {
+    const rows = STEPS.map(([label]) => {
+      const row = el("li", "tp-step");
+      row.append(el("span", "tp-step-icon"), el("span", "tp-step-label", label), el("span", "tp-step-result"));
+      return row;
+    });
+    $("tpSteps").replaceChildren(...rows);
+    let shown = 0;
+    let goal = 0;
+    let current = -1;
+    let creeping = setInterval(() => { goal += (34 - goal) * 0.09; }, 120);
+    let frame = 0;
+    const draw = () => {
+      shown = goal - shown < 0.3 ? goal : shown + (goal - shown) * 0.09;
+      $("tpBarFill").style.width = `${shown}%`;
+      $("tpScanPct").textContent = `${Math.floor(shown)}%`;
+      frame = requestAnimationFrame(draw);
+    };
+    draw();
+    return {
+      start(index) {
+        current = index;
+        rows[index].classList.add("active");
+        $("tpScanStatus").textContent = STEPS[index][1];
+      },
+      progress(index, result, percent) {
+        clearInterval(creeping);
+        rows[index].lastChild.textContent = result;
+        goal = percent;
+      },
+      done(index, result, percent) {
+        this.progress(index, result, percent);
+        rows[index].classList.replace("active", "done");
+      },
+      log(text) {
+        const line = el("div", "tp-log-line");
+        line.append(el("span", "tp-log-mark", "›"), el("span", "", text));
+        $("tpLog").append(line);
+        $("tpLog").scrollTop = $("tpLog").scrollHeight;
+      },
+      finish(status) {
+        shown = goal;
+        $("tpScanStatus").textContent = status;
+        $("tpScan").classList.add("complete");
+        setTimeout(() => cancelAnimationFrame(frame), 1500);
+      },
+      fail(message) {
+        clearInterval(creeping);
+        cancelAnimationFrame(frame);
+        if (current >= 0) rows[current].classList.replace("active", "failed");
+        $("tpScan").classList.add("failed");
+        $("tpScanStatus").textContent = message;
+      },
+    };
+  }
+
+  async function discover(scan, data) {
+    const { agents, tables, totals } = data;
+    scan.done(0, "built", 40);
+    scan.start(1);
+    await pause(380);
+    scan.log(`agents  ${agents.map((agent) => agent.name).join(" → ")}`);
+    scan.done(1, `${totals.agents} agents`, 52);
+    scan.start(2);
+    const width = Math.max(...agents.map((agent) => agent.name.length));
+    for (const [index, agent] of agents.entries()) {
+      await pause(140);
+      scan.log(`${agent.name.padEnd(width)}  ${agent.tools.map((tool) => tool.name).join(" · ") || "no tools"}`);
+      scan.progress(2, `${index + 1}/${agents.length}`, 52 + (22 * (index + 1)) / agents.length);
+    }
+    scan.done(2, `${totals.tools} tools`, 74);
+    scan.start(3);
+    await pause(420);
+    scan.log(`risk    ${totals.acting} of ${totals.tools} tools change or send something`);
+    scan.done(3, `${totals.acting} act`, 88);
+    scan.start(4);
+    await pause(380);
+    scan.log(`data    ${totals.records} records across ${tables.length} tables`);
+    scan.done(4, `${totals.records} records`, 100);
+    await pause(450);
+    scan.finish("Discovery complete");
+    await pause(650);
+  }
+
   async function load() {
+    const scan = scanner();
+    scan.start(0);
+    scan.log("reading the target's own code · no model is called");
     try {
-      const response = await fetch("/target/overview", { cache: "no-store" });
+      const [response] = await Promise.all([fetch("/target/overview", { cache: "no-store" }), pause(800)]);
       if (!response.ok) throw new Error();
       const data = await response.json();
+      await discover(scan, data);
       document.title = `purpleteam — ${data.title}`;
       $("tpTitle").textContent = data.title;
       $("tpSummary").replaceChildren(...data.paragraphs.map((text) => el("p", "", text)));
@@ -52,12 +149,11 @@
         chip.append(el("span", "", table.label), el("strong", "", table.rows));
         return chip;
       }));
-      $("tpMessage").classList.add("hidden");
+      $("tpScan").classList.add("hidden");
       $("tpBody").classList.remove("hidden");
     } catch {
       $("tpTitle").textContent = "Target under test";
-      $("tpMessage").textContent = "The target could not be read right now. You can still open the console.";
-      $("tpMessage").classList.add("error");
+      scan.fail("The target could not be read right now. You can still open the console.");
     }
   }
 
