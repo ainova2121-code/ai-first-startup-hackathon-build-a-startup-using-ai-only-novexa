@@ -32,10 +32,13 @@ class Ask(BaseModel):
 
 
 def _defended_run(runs: RunStore) -> Run | None:
-    """The newest finished run that kept a rebuildable verified defense."""
+    """The newest finished run of this target that kept a rebuildable verified defense -- never another project's
+    run from the same folder (``purpleteam.assess``), whose defense was verified for different agents."""
     for meta in runs.all():
+        if meta.get("target") != LedgerPilotTarget.name or meta.get("status") != "done":
+            continue
         run = runs.get(meta.get("id", ""))
-        if run is not None and meta.get("status") == "done" and run.read_json("policy"):
+        if run is not None and run.read_json("policy"):
             return run
     return None
 

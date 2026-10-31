@@ -19,6 +19,7 @@ VENDORS = [{"id": 1, "name": "WITI", "bank_account": "US909263998851"},
 class _Target:
     """Stands in for the real agent: replays one canned observation and records how it was built."""
 
+    name = "ledgerpilot"
     built: list = []
     observation = Observation('{"answer": "Your invoice is paid."}', [])
 
@@ -119,9 +120,26 @@ def test_patched_runs_behind_the_newest_verified_runs_defense(tmp_path, monkeypa
                                                            agent_name="inquiry")])
     run = runs.new()
     run.write_json("policy", policy_data([Finding("sql_injection", "query_ledger", "inquiry")], profile, {}))
-    run.write_meta(status="done")
+    run.write_meta(status="done", target="ledgerpilot")
     client = TestClient(live_demo.create_app(SourceSnapshots(tmp_path / "s.json"), tmp_path / "lp", runs, login=False))
     assert client.get("/inquiry/context").json()["defense"] == {"run": run.id, "patches": ["P8"]}
     result = _ask(client, patched=True).json()
     assert result["patched"] is True and result["run"] == run.id
     assert [p.id for p in _Target.built[-1]["guard"].patches] == ["P8"]  # the exact verified defense, rebuilt
+
+
+def test_another_projects_verified_run_is_never_used_as_ledgerpilots_defense(tmp_path, monkeypatch):
+    """Runs of other projects (purpleteam.assess) share the run folder; their defense was verified for other agents."""
+    from purpleteam.defender.policy import policy_data
+    from purpleteam.defender.selector import Finding
+    from purpleteam.discovery import DiscoveredTool, TargetProfile
+    monkeypatch.setattr(inquiry_api, "LedgerPilotTarget", _Target)
+    runs = RunStore(tmp_path / "runs")
+    other = TargetProfile("their-agents", [DiscoveredTool("run_sql", "", {}, "app.py:3", "execute", "analyst",
+                                                          agent_name="analyst")])
+    run = runs.new()
+    run.write_json("policy", policy_data([Finding("sql_injection", "run_sql", "analyst")], other, {}))
+    run.write_meta(status="done", target="their-agents")
+    client = TestClient(live_demo.create_app(SourceSnapshots(tmp_path / "s.json"), tmp_path / "lp", runs, login=False))
+    assert client.get("/inquiry/context").json()["defense"] is None
+    assert _ask(client, patched=True).status_code == 409
