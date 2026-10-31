@@ -155,6 +155,14 @@ uv run uvicorn --factory ledgerpilot.main:create_app
 
 Needs `LEDGERPILOT_LLM_API_KEY` or `HF_TOKEN` (see `.env.example`) for a real model endpoint.
 
+> **Demo data disclaimer.** The invoice PDFs in `data/invoices/` are real invoices from the FCC political public
+> file, taken unedited from Amazon's [ConfBench](https://huggingface.co/datasets/amazon/ConfBench) dataset (FCC
+> Invoices Verified subset) under [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/). They are used for
+> non-commercial demonstration and security research only, are not covered by this repository's LICENSE, and must be
+> replaced with synthetic invoices before any commercial use. Bank details and emails are synthetic. This project is
+> not affiliated with or endorsed by Amazon, the FCC or any station named in the invoices. See `NOTICE` and
+> `data/README.md`.
+
 ## Run a full assessment end to end
 
 ```bash
