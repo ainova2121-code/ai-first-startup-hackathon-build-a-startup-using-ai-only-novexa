@@ -84,13 +84,6 @@ tool-call evidence from the gateway observer. The PDF fixture is ASCII-only; Uni
 tested separately. This adapter provides the upload attack path; it does not automatically install a
 defense into the customer application.
 
-## Deploy the live console (Azure, TPM-signed)
-
-[deploy/azure_windows.ps1](deploy/azure_windows.ps1) sets the console up on a Windows Server 2022 VM
-created with *Trusted launch* (a virtual TPM 2.0): checksum-verified uv and Caddy, automatic HTTPS on the
-VM's `cloudapp.azure.com` name, and startup tasks that restart on failure. Every checkpoint is then signed
-by that VM's TPM. The script's header lists the portal steps.
-
 ## Deploy the gateway (Docker Compose, one host)
 
 ```bash
