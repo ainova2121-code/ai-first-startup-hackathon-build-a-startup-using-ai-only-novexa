@@ -13,9 +13,23 @@ from __future__ import annotations
 import asyncio
 from typing import Any, Awaitable, Callable
 
+from purpleteam.adapter import TargetUnavailable
 from purpleteam.attack.outcome import Trial, classify
 from purpleteam.attack.pyrit_target import PlatformPromptTarget
 from purpleteam.oracle import Oracle, persuasion
+
+
+def _reason(failure: BaseException) -> str:
+    """Why an attempt failed: a ``TargetUnavailable``'s own message (the platform's, an HTTP status) wherever PyRIT
+    wrapped it, else only the exception's type -- never text that came from the target."""
+    seen: BaseException | None = failure
+    for _ in range(10):  # a bounded walk: exception chains can loop
+        if seen is None:
+            break
+        if isinstance(seen, TargetUnavailable):
+            return str(seen)
+        seen = seen.__cause__ or seen.__context__
+    return type(failure).__name__
 
 
 async def run_attempt(execute: Callable[[], Awaitable[Any]], target: PlatformPromptTarget, oracle: Oracle,
@@ -28,7 +42,7 @@ async def run_attempt(execute: Callable[[], Awaitable[Any]], target: PlatformPro
     except asyncio.TimeoutError:
         timed_out = True
     except Exception as failure:  # rate limits, a refused connection, a tooling error: none of them is "held"
-        error = type(failure).__name__
+        error = _reason(failure)
     observation = target.last_observation
     verdict = oracle.judge(observation) if observation else None
     persuaded = persuasion(oracle, observation) if verdict is not None and not verdict.breached else None

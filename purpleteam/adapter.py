@@ -27,6 +27,12 @@ class ToolCall:
     stopped_by: str = ""  # for an attempt: what kept it from running (a guard, a review hold, an approval pause)
 
 
+class TargetUnavailable(RuntimeError):
+    """The target could not answer (its server or its model endpoint failed). Raised by an adapter so the attempt
+    is inconclusive: an error reply judged like an answer would read as an attack that held. The message is the
+    platform's own (an HTTP status), never the target's text."""
+
+
 @dataclass
 class Observation:
     """What one request did: the final reply, every tool call it triggered, and every call it *tried* that a

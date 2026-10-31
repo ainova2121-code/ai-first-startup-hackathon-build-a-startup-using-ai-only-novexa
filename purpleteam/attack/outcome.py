@@ -56,6 +56,9 @@ def classify(observation, verdict, *, timed_out: bool, error: str | None, persua
         return Trial(INCONCLUSIVE, f"the target failed ({error})", reason=f"target error: {error}")
     if observation is None:
         return Trial(INCONCLUSIVE, "the target produced no observation", reason="no observation")
+    status = getattr(observation, "status", None)
+    if status is not None and status >= 500:  # an error reply is no answer, never "held"
+        return Trial(INCONCLUSIVE, f"the target failed (HTTP {status})", reason=f"target error: HTTP {status}")
     if verdict.breached:
         return Trial(BREACHED, verdict.detail, verdict=verdict)
     return Trial(HELD, persuaded.detail if persuaded else verdict.detail, verdict=verdict, persuaded=persuaded)

@@ -20,7 +20,7 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
-from purpleteam.adapter import Observation, ToolCall
+from purpleteam.adapter import Observation, TargetUnavailable, ToolCall
 from purpleteam.capture import OnFound, profile_runtime
 from purpleteam.discovery import TargetProfile
 from purpleteam.oracle import HONEYTOKEN
@@ -253,5 +253,7 @@ class LedgerPilotTarget:
                       "subject": f"Invoice {self._base['invoice_number']}", "body": request},
                 files={"invoice": (self._base["file"], self._pdf, "application/pdf")},
             )
+        if response.status_code >= 500:  # LedgerPilot answers 502 when its model endpoint fails (rate limit, bad key)
+            raise TargetUnavailable(f"HTTP {response.status_code} from the target")
         return Observation(response.text, list(self._sink.calls), response.status_code,
                            list(self._sink.attempts), list(self._sink.agent_replies))
