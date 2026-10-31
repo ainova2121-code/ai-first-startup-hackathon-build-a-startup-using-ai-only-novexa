@@ -121,3 +121,44 @@ def test_existing_redteam_and_crescendo_campaigns_use_the_same_proof_oracle(monk
         assert result.technique == strategy.upper()
         assert result.outcome == HELD
         assert result.trials == 1
+
+
+class _SharedStateTarget:
+    """One agent app with one database, as every TAP branch shares it: notices any overlap between requests."""
+
+    def __init__(self):
+        import threading
+        self.rows, self.active, self.overlaps, self._lock = [], 0, 0, threading.Lock()
+
+    def reset(self):
+        self._enter()
+        self.rows.clear()
+        self._leave()
+
+    def send(self, text):
+        import time
+        self._enter()
+        leftover = list(self.rows)  # anything here was written by another request
+        self.rows.append(text)
+        time.sleep(0.05)
+        self._leave()
+        return Observation(f"saw {len(leftover)} other rows", [])
+
+    def _enter(self):
+        with self._lock:
+            self.active += 1
+            self.overlaps += self.active > 1
+
+    def _leave(self):
+        with self._lock:
+            self.active -= 1
+
+
+def test_branches_sent_at_once_each_run_alone_on_a_clean_target():
+    """TAP dispatches branches simultaneously against one target: each reset-then-send must not interleave."""
+    from concurrent.futures import ThreadPoolExecutor
+    target = _SharedStateTarget()
+    wrapper = PlatformPromptTarget(target=target)
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        replies = list(pool.map(wrapper._send, [f"branch {i}" for i in range(4)]))
+    assert target.overlaps == 0 and all(r.reply == "saw 0 other rows" for r in replies)

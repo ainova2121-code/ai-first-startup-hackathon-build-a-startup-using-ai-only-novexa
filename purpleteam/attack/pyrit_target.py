@@ -113,6 +113,9 @@ class PlatformPromptTarget(PromptTarget):
         self._max_unique_prompts = max_unique_prompts
         self._unique_prompt_keys: set[str] = set()
         self._prompt_gate = asyncio.Lock()
+        # TAP dispatches several branches at once, but they all drive this one target and its single state (an agent
+        # app's database): each reset-then-send must run alone, or one branch wipes or reads another's state.
+        self._send_lock = threading.Lock()
         self.duplicate_prompts_skipped = 0
         self.prompt_budget_exhausted = False
         self.last_observation: Observation | None = None
@@ -165,9 +168,10 @@ class PlatformPromptTarget(PromptTarget):
     def _send(self, text: str) -> Observation:
         if self._control is not None and not self._control.checkpoint():
             raise RunStopped("run stopped before the next target request")
-        if self._reset_each_turn:
-            self._target.reset()
-        return self._target.send(text)
+        with self._send_lock:
+            if self._reset_each_turn:
+                self._target.reset()
+            return self._target.send(text)
 
     def _validate_request(self, *, normalized_conversation) -> None:
         pass
