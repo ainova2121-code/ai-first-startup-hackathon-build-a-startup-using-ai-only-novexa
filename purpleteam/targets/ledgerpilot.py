@@ -141,12 +141,13 @@ class LedgerPilotTarget:
 
     name = "ledgerpilot"
 
-    def __init__(self, base_invoice: str = "2112-1", channel: str = "invoice", guard: Any = None) -> None:
+    def __init__(self, base_invoice: str = "2112-1", channel: str = "invoice", guard: Any = None,
+                 vendor_id: int = 1) -> None:
         seeding, self._repos = _lp("db.seed"), _lp("db.repositories")
         manifest = seeding.load_manifest(REPO_INVOICES)
         self._base = next(e for e in manifest if e["invoice_number"] == base_invoice)
         self._pdf = (REPO_INVOICES / self._base["file"]).read_bytes()
-        self._channel = channel
+        self._channel, self._vendor_id = channel, vendor_id  # the vendor an inquiry is asked on behalf of
         self._settings = _lp("utils.config").Settings(data_dir=Path(tempfile.mkdtemp(prefix="lp-target-")))
         shutil.copyfile(_seeded_database(seeding, self._repos, manifest), self._settings.db_path)
         self._bank_account = seeding.bank_account
@@ -201,7 +202,7 @@ class LedgerPilotTarget:
         self._sink.attempts.clear()
         self._sink.agent_replies.clear()
         if self._channel == "inquiry":
-            response = self._client.post("/inquiries", json={"vendor_id": 1, "question": request})
+            response = self._client.post("/inquiries", json={"vendor_id": self._vendor_id, "question": request})
         else:
             response = self._client.post(
                 "/invoices",

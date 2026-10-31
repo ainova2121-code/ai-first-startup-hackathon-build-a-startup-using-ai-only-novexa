@@ -11,6 +11,7 @@
 <link rel="stylesheet" href="/static/ledger.css?v=43">
 <link rel="stylesheet" href="/static/discovery.css?v=44">
 <link rel="stylesheet" href="/static/database.css?v=2">
+<link rel="stylesheet" href="/static/inquiry.css?v=1">
 <style>
   /* A tab with no data yet is frozen until its data arrives (see updateTabGates in app.js). */
   .tabs a.disabled { pointer-events: none; opacity: .38; }
@@ -92,6 +93,7 @@
     </a>
     <a href="#/discovery" data-route="discovery">Discovery</a>
     <a href="#/database" data-route="database"><span class="db-nav-icon" aria-hidden="true">▦</span>Database</a>
+    <a href="#/inquiry" data-route="inquiry">Inquiry</a>
     <a href="#/files" data-route="files">Patched files <span id="filesCount" class="count hidden"></span></a>
     <a href="#/drift" data-route="drift">Decision drift</a>
     <a href="#/ledger" data-route="ledger">Audit ledger</a>
@@ -245,6 +247,36 @@
     </section>
   </section>
 
+  <section class="page hidden" data-page="inquiry">
+    <section class="panel database-panel">
+      <div class="database-hero">
+        <div class="database-hero-copy">
+          <div class="database-eyebrow"><span class="db-pulse"></span> TARGET AGENT · SUPPLIER PORTAL</div>
+          <h1>Agent inquiry</h1>
+          <p>Ask LedgerPilot's inquiry agent a question as one vendor. It answers by writing and running SQL on the ledger; every answer is checked for data that belongs to someone else.</p>
+        </div>
+        <div class="database-hero-actions">
+          <div id="iqMode" class="iq-mode" role="radiogroup" aria-label="Agent version">
+            <button type="button" class="iq-mode-option active" data-patched="false" role="radio" aria-checked="true">Unpatched</button>
+            <button type="button" class="iq-mode-option" data-patched="true" role="radio" aria-checked="false">Patched</button>
+          </div>
+        </div>
+      </div>
+      <div class="db-explainer">
+        <span class="db-info-mark" aria-hidden="true">i</span>
+        <span id="iqModeNote">The agent exactly as built, with no runtime defense.</span>
+      </div>
+      <form id="iqForm" class="iq-form">
+        <label class="iq-field"><span class="iq-label">Ask as</span><select id="iqVendor" required></select></label>
+        <label class="iq-field iq-grow"><span class="iq-label">Question</span>
+          <textarea id="iqQuestion" rows="2" maxlength="500" required placeholder="Has my latest invoice been paid?"></textarea></label>
+        <button id="iqAsk" class="btn primary iq-ask" type="submit">Ask</button>
+      </form>
+      <div id="iqMessage" class="db-message">Ask a question to see the agent's answer and every query it ran.</div>
+      <div id="iqResults" class="iq-results"></div>
+    </section>
+  </section>
+
   <section class="page" data-page="files">
     <section class="panel">
       <div class="panel-head">
@@ -328,6 +360,7 @@
 <script src="/static/feed.js?v=51"></script>
 <script src="/static/expand.js?v=49"></script>
 <script src="/static/database.js?v=4"></script>
-<script src="/static/app.js?v=58"></script>
+<script src="/static/inquiry.js?v=1"></script>
+<script src="/static/app.js?v=59"></script>
 </body>
 </html>

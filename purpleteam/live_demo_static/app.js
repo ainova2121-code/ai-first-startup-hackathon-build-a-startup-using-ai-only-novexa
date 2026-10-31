@@ -203,7 +203,7 @@ function renderAll(events, isReplay) {
 
 // -- pages and runs ---------------------------------------------------------------------------------
 
-const ROUTES = ["run", "discovery", "database", "files", "drift", "ledger"];
+const ROUTES = ["run", "discovery", "database", "inquiry", "files", "drift", "ledger"];
 const route = () => { const r = location.hash.replace("#/", ""); return ROUTES.includes(r) ? r : "run"; };
 const viewedRunId = () => (viewing === "live" ? liveRunId : viewing);
 
@@ -223,6 +223,7 @@ function showPage() {
   });
   if (current === "drift") loadDrift(viewedRunId());
   if (current === "database" && window.loadDatabase) window.loadDatabase();
+  if (current === "inquiry" && window.loadInquiry) window.loadInquiry();
   if (current === "files") document.querySelectorAll("#filesList .file-view").forEach((v) => v.scrollToChange && v.scrollToChange());
   updateTabGates();
 }
@@ -417,6 +418,7 @@ function tabGates(ev) {
   return {
     run: any("discovered"), discovery: any("found_agent", "found_tool", "discovered"),
     database: any("attack_setup"),  // a target is instantiated only for an attack run, after discovery
+    inquiry: true,  // the unpatched agent can be asked at any time
     files: ev.some((e) => e.type === "source_patch"),
     drift: any("decision_baseline", "decision_drift"), ledger: any("signed", "sealed"),
   };
@@ -430,7 +432,7 @@ function updateTabGates() {
     const r = a.dataset.route;
     // Before the first run: only Live run and Discovery are open, everything else frozen. During/after a run:
     // a tab opens only once its page has data. The tab in view is never frozen, so the viewer is never stranded.
-    const open = r === current || (started ? Boolean(gates[r]) : (r === "run" || r === "discovery"));
+    const open = r === current || (started ? Boolean(gates[r]) : ["run", "discovery", "inquiry"].includes(r));
     a.classList.toggle("disabled", !open);
   });
 }
