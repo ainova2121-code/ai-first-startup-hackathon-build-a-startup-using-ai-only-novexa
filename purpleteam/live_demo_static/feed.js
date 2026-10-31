@@ -256,6 +256,7 @@ function onAttackResult(e) {
   if (e.breached) body.appendChild(el("div", "proof", `Breach proven — ${e.detail}`));
   else if (persuaded(e)) body.appendChild(el("div", "proof attempt", `Attempt detected — ${e.detail}`));
   else if (e.technique === "reverify") body.appendChild(el("div", "label", e.detail));
+  else if (e.outcome === "inconclusive" && e.detail) body.appendChild(el("div", "proof why", `Not tested — ${e.detail}`));
   group.running = Math.max(0, group.running - 1);
   if (e.breached) group.breached += 1; else if (e.outcome === "held") group.held += 1;
   if (persuaded(e)) group.persuaded += 1;
