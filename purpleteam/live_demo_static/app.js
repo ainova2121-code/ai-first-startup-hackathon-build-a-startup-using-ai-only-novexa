@@ -310,8 +310,8 @@ $("logoutBtn").addEventListener("click", async () => {
       banner.textContent = body.detail || "log out refused";
       return;
     }
-  } catch { /* even if the request fails, send the visitor back to the login page */ }
-  window.location.href = "/login";
+  } catch { /* even if the request fails, send the visitor back to the start */ }
+  window.location.href = "/";  // the server sends a signed-out visitor on to its login page
 });
 
 $("startBtn").addEventListener("click", async () => {
