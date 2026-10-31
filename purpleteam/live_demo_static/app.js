@@ -374,6 +374,7 @@ window.addEventListener("hashchange", showPage);
 const MODE_NOTES = {
   quick: "Seconds · inspection only: discovery, posture, source scan, prompt rules, catalog fixes. No attacks, no verdict.",
   custom: "Minutes · the model-free custom dataset (claims, jailbreak/injection corpus, obfuscation) against the unpatched agent, then patch, re-attack, verdict.",
+  showcase: "Short · the attacks that breached in your last run, plus two that held, sent again live and judged again: a past breach is never assumed, then patch, re-attack, verdict.",
   pyrit: "Model-driven · PyRIT searches for a working phrasing with the chosen attacker model. Needs an attacker key.",
   full: "Longest · the custom dataset PLUS context-aware (per-agent) and adaptive attacks with the chosen attacker model.",
 };
@@ -393,7 +394,8 @@ function syncControls() {  // show only the inputs the chosen mode uses, and des
   $("datasetJsonLink").classList.toggle("hidden", quick || suite !== "custom");
   $("pyritStrategy").classList.toggle("hidden", quick || suite !== "pyrit");
   $("attackerModel").classList.toggle("hidden", quick || !(suite === "pyrit" || suite === "full"));
-  $("modeNote").textContent = MODE_NOTES[quick ? "quick" : suite];
+  const showcase = suite === "custom" && $("customSuite").value === "showcase";
+  $("modeNote").textContent = MODE_NOTES[quick ? "quick" : showcase ? "showcase" : suite];
 }
 
 ["runSuite", "customSuite", "pyritStrategy", "attackerModel", "quickScan"].forEach(

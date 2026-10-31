@@ -47,6 +47,7 @@ from purpleteam.live_run import (  # noqa: F401
 )
 from purpleteam.run_history import Run, RunStore
 from purpleteam.run_control import RunControl
+from purpleteam.showcase import available as showcase_available
 from purpleteam.targets.ledgerpilot import LedgerPilotTarget, reload_source
 
 KEEPALIVE_SECONDS = 20
@@ -172,6 +173,8 @@ def create_app(snapshots: SourceSnapshots | None = None, target_repo: Path = TAR
         if mode != "static" and attack_type in MODEL_ATTACK_TYPES and not (attacker_model or attacker_key_present()):
             raise HTTPException(422, "This run needs an attacker model. Set PURPLETEAM_ATTACKER_KEY "
                                      "(or GROQ_API_KEY) and pick a model.")
+        if attack_type == "showcase" and not showcase_available(runs, LedgerPilotTarget.name):
+            raise HTTPException(422, "Nothing to showcase yet: no earlier run has a breach. Run the Full dataset first.")
         if state.running:
             raise HTTPException(409, "a run is already in progress")
         # Prepare the baseline this run attacks. A prior verified source fix the platform left on disk and

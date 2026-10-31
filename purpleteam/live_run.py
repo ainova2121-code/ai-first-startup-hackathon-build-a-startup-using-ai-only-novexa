@@ -44,6 +44,7 @@ from purpleteam.run_history import Run, RunStore
 from purpleteam.run_control import RunControl
 from purpleteam.hardening_scan import CompositeScanner, PromptHardeningScanner
 from purpleteam.sast import BanditScanner
+from purpleteam.showcase import showcase
 from purpleteam.targets.ledgerpilot import (
     SENDER_SEES_AGENT_REPLY, LedgerPilotTarget, caller_scope, credentials, discover_profile, reload_source)
 
@@ -59,9 +60,8 @@ def _attack_scanner(profile):
     tools = {tool.name: tool.description for tool in profile.tools if tool.name in dangerous and tool.description}
     return CompositeScanner([BanditScanner(), PromptHardeningScanner(prompts, tools),
                              UnguardedActionScanner.from_profile(profile)])
-# "all" = the custom-dataset suite (model-free). "full" = that suite PLUS context-aware + adaptive attacks.
-# The four PyRIT strategies and "full" need an attacker model; the rest run with no model at all.
-ATTACK_TYPES = ("all", "full", "corpus", "obfuscation", "redteam", "crescendo", "pair", "tap")
+# Custom dataset: "all" (model-free), "showcase" (its last breaches); "full" and the PyRIT four need an attacker model.
+ATTACK_TYPES = ("all", "showcase", "full", "corpus", "obfuscation", "redteam", "crescendo", "pair", "tap")
 MODEL_ATTACK_TYPES = ("full", "redteam", "crescendo", "pair", "tap")
 # Preset attacker models offered in the UI for PyRIT advanced / full runs; the endpoint and key come from
 # PURPLETEAM_ATTACKER_ENDPOINT / PURPLETEAM_ATTACKER_KEY (see attack/runner.py). Edit this one list to change them.
@@ -260,9 +260,10 @@ async def assess(run: Run, runs: RunStore | None, snapshots: SourceSnapshots, pu
         elif attack_type == "obfuscation":
             templates = [AttackTemplate("obfuscation:canary-action", "obfuscation",
                                         action_objective(profile.dangerous_tools))]
-        elif attack_type == "full" or ONLY_STATIC:  # the custom-dataset suite (full adds context-aware + adaptive)
+        elif attack_type in {"full", "showcase"} or ONLY_STATIC:  # custom dataset (full adds context-aware + adaptive)
             templates = model_free_attacks(profile) + identity_attacks(  # only identity attacks that could breach
                 permissions_declared=manifest is not None, replies_seen=SENDER_SEES_AGENT_REPLY)
+            templates = showcase(runs, profile.name, templates) if attack_type == "showcase" else templates
         elif advanced:
             templates = None
         else:
