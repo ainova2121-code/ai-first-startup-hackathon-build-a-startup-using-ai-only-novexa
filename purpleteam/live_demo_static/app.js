@@ -441,4 +441,12 @@ $("dmReplayBtn").addEventListener("click", () => dmReplay(viewing === "live" ? l
 dmReset();
 renderSteps();
 refreshModified();
-refreshRuns().then(showPage);
+// The About page's "Start the assessment" lands here with ?start=1: start once, then drop it from the address so a
+// reload never starts another run. A run already going is simply watched.
+function startFromAbout() {
+  if (!new URLSearchParams(location.search).has("start")) return;
+  history.replaceState(null, "", location.pathname + location.hash);
+  if (!running) $("startBtn").click();
+}
+
+refreshRuns().then(showPage).then(startFromAbout);

@@ -8,51 +8,48 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/app.css?v=51">
-<link rel="stylesheet" href="/static/database.css?v=3">
-<link rel="stylesheet" href="/static/target.css?v=2">
+<link rel="stylesheet" href="/static/target.css?v=3">
 </head>
 <body>
 <header class="topbar">
   <div class="brand"><span class="brand-mark"></span>purpleteam</div>
-  <a class="btn primary tp-cta" href="/">Open the console →</a>
+  <a class="ab-console" href="/">Open the console</a>
 </header>
-<main class="tp-main">
-  <section class="panel database-panel">
-    <div class="database-hero">
-      <div class="database-hero-copy">
-        <div class="database-eyebrow"><span class="db-pulse"></span> TARGET UNDER TEST</div>
-        <h1 id="tpTitle">Discovering the target…</h1>
-        <div id="tpSummary" class="tp-summary"></div>
-      </div>
-    </div>
-    <div id="tpStats" class="db-overview"></div>
-    <div id="tpScan" class="tp-scan" role="status" aria-live="polite">
-      <div class="tp-scan-head">
-        <span class="tp-scan-orb"></span>
-        <div class="tp-scan-copy">
-          <div class="tp-scan-title">Discovery agent</div>
-          <div id="tpScanStatus" class="tp-scan-status">Building the target from its own code…</div>
-        </div>
-        <span id="tpScanPct" class="tp-scan-pct">0%</span>
-      </div>
-      <div class="tp-bar"><div id="tpBarFill" class="tp-bar-fill"></div></div>
-      <ol id="tpSteps" class="tp-steps"></ol>
-      <div id="tpLog" class="tp-log"></div>
-    </div>
-    <div id="tpBody" class="hidden">
-      <div class="tp-section">
-        <div class="tp-section-title">Agents <span>in the order the target builds them</span></div>
-        <div id="tpAgents" class="tp-agents"></div>
-      </div>
-      <div class="tp-section">
-        <div class="tp-section-title">Data <span>what the target starts with</span></div>
-        <div id="tpTables" class="tp-tables"></div>
-      </div>
-    </div>
-    <div class="db-footer"><span>Discovered from the target's own code · no model called</span>
-      <a class="tp-footer-link" href="/">Start testing →</a></div>
+<main class="ab-main">
+  <section class="ab-hero">
+    <div class="ab-eyebrow"><span class="ab-pulse"></span>Target under test</div>
+    <h1 id="abTitle" class="ab-title">&nbsp;</h1>
+    <div id="abStory" class="ab-story" aria-live="polite"></div>
   </section>
+
+  <section class="ab-plan" aria-labelledby="abPlanTitle">
+    <h2 id="abPlanTitle" class="ab-plan-title">When you start</h2>
+    <ol class="ab-steps">
+      <li><span class="ab-step-num">01</span><strong>Discover</strong>
+        <span>Reads the target's own code to find its agents, their tools and what each tool can do. The map builds live in the Discovery tab.</span></li>
+      <li><span class="ab-step-num">02</span><strong>Attack</strong>
+        <span>Sends the attack dataset at the agents as they are, and proves every breach by what an agent actually did, never by reading its words.</span></li>
+      <li><span class="ab-step-num">03</span><strong>Patch</strong>
+        <span>Picks fixes from a reviewed catalog: runtime guards, plus exact source edits that are verified before they apply.</span></li>
+      <li><span class="ab-step-num">04</span><strong>Verify and sign</strong>
+        <span>Re-attacks the patched agents with the same payloads, then signs the verdict into a tamper-evident ledger.</span></li>
+    </ol>
+  </section>
+
+  <section class="ab-start">
+    <a class="btn primary ab-start-btn" href="/?start=1#/discovery">Start the assessment <span aria-hidden="true">→</span></a>
+    <span class="ab-start-note">Runs the custom dataset. Choose another mode in the console.</span>
+  </section>
+  <footer class="ab-footer">
+    <p class="ab-notice"><strong>Demo data disclaimer.</strong> The invoice PDFs are real invoices from the FCC political
+      public file, taken unedited from Amazon's <a href="https://huggingface.co/datasets/amazon/ConfBench" target="_blank"
+      rel="noopener noreferrer">ConfBench</a> dataset (FCC Invoices Verified subset) and licensed under
+      <a href="https://creativecommons.org/licenses/by-nc/4.0/" target="_blank" rel="noopener noreferrer">CC BY-NC 4.0</a>.
+      They are used for non-commercial demonstration and security research only. Bank details and email addresses are
+      synthetic. This project is not affiliated with or endorsed by Amazon, the FCC or any station named in the invoices.</p>
+    <p>The target, in its owner's own words · nothing here calls a model</p>
+  </footer>
 </main>
-<script src="/static/target.js?v=2"></script>
+<script src="/static/target.js?v=3"></script>
 </body>
 </html>

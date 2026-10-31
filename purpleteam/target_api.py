@@ -40,6 +40,11 @@ def target_routes(static_dir: Path) -> APIRouter:
     def page() -> FileResponse:
         return FileResponse(static_dir / "target.html", headers={"Cache-Control": "no-cache"})
 
+    @router.get("/target/about")
+    def target_about() -> dict:
+        """The owner's summary alone, for the About page: no discovery, which runs once, in the run itself."""
+        return about()
+
     @router.get("/target/overview")
     def target_overview() -> dict:
         with lock:
