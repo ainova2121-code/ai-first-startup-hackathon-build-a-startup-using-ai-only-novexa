@@ -51,7 +51,8 @@ button:hover{filter:brightness(1.08)}button:active{transform:translateY(1px)}
 </form></body></html>"""
 
 
-def install_login(app: FastAPI) -> None:
+def install_login(app: FastAPI, landing: str = "/") -> None:
+    """Gate every route behind a session; ``landing`` is where a fresh sign-in goes first."""
     key = secrets.token_bytes(32)
 
     def sign(expires: int, nonce: str) -> str:
@@ -83,7 +84,7 @@ def install_login(app: FastAPI) -> None:
     @app.post("/login")
     def login(request: Request) -> Response:
         expires, nonce = int(time.time()) + SESSION_SECONDS, secrets.token_hex(16)
-        response = RedirectResponse("/", 303)
+        response = RedirectResponse(landing, 303)
         secure = request.url.scheme == "https" or request.headers.get("x-forwarded-proto") == "https"
         response.set_cookie(COOKIE, f"{expires}.{nonce}.{sign(expires, nonce)}", max_age=SESSION_SECONDS,
                             httponly=True, samesite="strict", secure=secure)

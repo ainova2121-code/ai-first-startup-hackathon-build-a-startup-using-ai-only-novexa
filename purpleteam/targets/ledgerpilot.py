@@ -79,6 +79,32 @@ def _seeded_database(seeding: Any, repos: Any, manifest: list[dict]) -> Path:
         return _SEEDED[seeding]
 
 
+ABOUT = REPO_INVOICES.parents[1] / "ledgerpilot" / "ABOUT.md"  # the target owner's own summary
+
+
+def about() -> dict[str, Any]:
+    """The owner's summary: a ``# title`` line, then paragraphs. Read as plain text, never rendered as markup."""
+    title, *paragraphs = ABOUT.read_text(encoding="utf-8").strip().split("\n\n")
+    return {"title": title.lstrip("#").strip(), "paragraphs": [" ".join(part.split()) for part in paragraphs]}
+
+
+def seeded_tables() -> list[dict[str, Any]]:
+    """Each table the target starts with and its record count, from the seeded database -- no model needed. The
+    planted honeytoken vendor is the platform's decoy, not the target's data, so it is not counted."""
+    seeding = _lp("db.seed")
+    path = _seeded_database(seeding, _lp("db.repositories"), seeding.load_manifest(REPO_INVOICES))
+    conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+    try:
+        counts = []
+        for name, label in DATABASE_TABLES:
+            where, params = (" WHERE name != ?", (HONEYTOKEN_VENDOR,)) if name == "vendors" else ("", ())
+            rows = conn.execute(f'SELECT COUNT(*) FROM "{name}"{where}', params).fetchone()[0]  # nosec B608: fixed
+            counts.append({"name": name, "label": label, "rows": rows})
+        return counts
+    finally:
+        conn.close()
+
+
 def credentials(profile: TargetProfile) -> dict[str, str]:
     """Which credential each agent acts through. LedgerPilot opens one database connection in
     ``create_app`` and every agent's repositories use it, so there is a single shared identity."""

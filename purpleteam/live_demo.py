@@ -39,6 +39,7 @@ from purpleteam.console.events import Broadcaster
 from purpleteam.demo_auth import COOKIE, install_login
 from purpleteam.drift_api import drift_routes
 from purpleteam.inquiry_api import inquiry_routes
+from purpleteam.target_api import target_routes
 from purpleteam.live_run import (  # noqa: F401
     ATTACK_TYPES, ATTACKER_MODELS, MODEL_ATTACK_TYPES, MODES, ONLY_STATIC, OPERATOR_DIR, TARGET_REPO,
     assess, attacker_key_present, discovery_event, found_events,
@@ -98,10 +99,11 @@ def create_app(snapshots: SourceSnapshots | None = None, target_repo: Path = TAR
     app.state.run = state
     state.runs = runs
     if login:
-        install_login(app)
+        install_login(app, landing="/target")  # sign-in opens on the target overview, then the console
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
     app.include_router(drift_routes(runs))
     app.include_router(inquiry_routes(runs, busy=lambda: state.running))
+    app.include_router(target_routes(STATIC_DIR))
 
     @app.get("/")
     def index() -> FileResponse:

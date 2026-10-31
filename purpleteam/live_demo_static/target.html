@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>purpleteam — target under test</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css?v=50">
+<link rel="stylesheet" href="/static/database.css?v=2">
+<link rel="stylesheet" href="/static/target.css?v=1">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><span class="brand-mark"></span>purpleteam</div>
+  <a class="btn primary tp-cta" href="/">Open the console →</a>
+</header>
+<main class="tp-main">
+  <section class="panel database-panel">
+    <div class="database-hero">
+      <div class="database-hero-copy">
+        <div class="database-eyebrow"><span class="db-pulse"></span> TARGET UNDER TEST</div>
+        <h1 id="tpTitle">Discovering the target…</h1>
+        <div id="tpSummary" class="tp-summary"></div>
+      </div>
+    </div>
+    <div id="tpStats" class="db-overview"></div>
+    <div id="tpMessage" class="db-message">Reading the target's own code to find its agents and tools…</div>
+    <div id="tpBody" class="hidden">
+      <div class="tp-section">
+        <div class="tp-section-title">Agents <span>in the order the target builds them</span></div>
+        <div id="tpAgents" class="tp-agents"></div>
+      </div>
+      <div class="tp-section">
+        <div class="tp-section-title">Data <span>what the target starts with</span></div>
+        <div id="tpTables" class="tp-tables"></div>
+      </div>
+    </div>
+    <div class="db-footer"><span>Discovered from the target's own code · no model called</span>
+      <a class="tp-footer-link" href="/">Start testing →</a></div>
+  </section>
+</main>
+<script src="/static/target.js?v=1"></script>
+</body>
+</html>

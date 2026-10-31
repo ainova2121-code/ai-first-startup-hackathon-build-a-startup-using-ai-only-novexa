@@ -34,7 +34,8 @@ def test_one_click_opens_every_route_with_a_locked_down_cookie(tmp_path):
     client = _client(tmp_path)
     response = client.post("/login", follow_redirects=False)  # no code to type
     cookie = response.headers["set-cookie"].lower()
-    assert response.headers["location"] == "/" and all(f in cookie for f in ("httponly", "samesite=strict", "secure"))
+    assert response.headers["location"] == "/target"  # the target overview first, then the console
+    assert all(f in cookie for f in ("httponly", "samesite=strict", "secure"))
     assert client.get("/runs").status_code == 200 and client.get("/").status_code == 200
 
 
