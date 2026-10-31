@@ -13,7 +13,8 @@ FINDING_PATCHES: dict[str, list[str]] = {
     "injection_action": ["P2", "P15", "P4", "P5"],
     "jailbreak": ["P2", "P15", "P4"],
     "sql_injection": ["P8"],
-    "exfiltration": ["P2", "P15", "P8", "P9"],
+    # P16 after P8: read-only is not enough when the rows belong to other tenants (needs the operator's facts).
+    "exfiltration": ["P2", "P15", "P8", "P16", "P9"],
     "prompt_leak": ["P2", "P15", "P9"],
     "egress_leak": ["P10", "P2", "P15"],
     "privilege_escalation": ["P11", "P2"],
@@ -25,8 +26,9 @@ FINDING_PATCHES: dict[str, list[str]] = {
     "undeclared_agent": ["P11"],
     # P8 first: a surgical fix (the tool keeps working for reads, only a write is ever blocked,
     # deterministically, regardless of what the model is persuaded to try) beats P4's blunt
-    # full-tool hold for a finding that is specifically about an unscoped *write* capability.
-    "unscoped_execution": ["P8", "P4"],
+    # full-tool hold for a finding that is specifically about an unscoped *write* capability. With P16 as well the
+    # tool can read only its caller's rows, so the hold is redundant (``SCOPED_REPLACES_HOLD``).
+    "unscoped_execution": ["P8", "P16", "P4"],
     # Structural: a memory-write tool exists, so anything planted there outlives the conversation.
     "memory_write_surface": ["P12"],
     # Observed: an agent repeated the same tool call (LoopOracle).
@@ -47,6 +49,7 @@ PATCH_SUMMARY: dict[str, str] = {
     "P13": "cap each agent's tool-call budget and stop repeated identical calls",
     "P14": "refuse a destination or identity value that only outside content supplied, unconfirmed by any record",
     "P15": "frame untrusted content as data, not instructions (runtime prompt hardening)",
+    "P16": "let a query tool read only rows pinned to the caller its request was made for",
 }
 
 CATALOG_IDS = tuple(PATCH_SUMMARY)
@@ -58,7 +61,12 @@ GLOBAL_PATCHES = frozenset({"P2", "P9", "P10", "P11", "P12", "P13", "P14", "P15"
 # supplies business-specific facts (which verified values are legitimate for an argument) that
 # cannot be inferred, unlike every other patch here, which either always builds or fails only for
 # a genuine environment reason (P2 with no ML backend available) worth flagging as a real gap.
-OPTIONAL_PATCHES = frozenset({"P5"})
+OPTIONAL_PATCHES = frozenset({"P5", "P16"})  # P16 likewise needs the operator's tenancy facts
+
+# Together these confine a query tool to read-only reads of its own caller's rows -- exactly the tool's job -- so
+# P4's hold on that tool adds only friction (every legitimate lookup waits for a person). Dropped only at the base
+# escalation level: a verified replay that still breaches escalates back to holds.
+SCOPED_REPLACES_HOLD = frozenset({"P8", "P16"})
 
 # A breach the catalog names no guard for still gets a guard: a generic dynamic containment derived from the
 # breach itself -- hold the exact tool it went through for human verification (P4). The guard code is fixed and
@@ -99,6 +107,8 @@ def missing_patches(kind: str, applied: set[str], has_tool: bool = True) -> list
     if recommended is None:
         return ["no catalog entry"]
     required = set(recommended) - OPTIONAL_PATCHES
+    if SCOPED_REPLACES_HOLD <= applied:
+        required.discard("P4")
     if not has_tool:
         scoped = required - GLOBAL_PATCHES
         required = (required & GLOBAL_PATCHES) or scoped  # nothing global to apply -> the scoped answers are the gap

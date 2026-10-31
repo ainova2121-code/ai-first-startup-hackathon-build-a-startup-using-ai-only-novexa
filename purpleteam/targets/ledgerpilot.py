@@ -111,6 +111,15 @@ def credentials(profile: TargetProfile) -> dict[str, str]:
     return {agent: SHARED_CREDENTIAL for agent in sorted(profile.agents)}
 
 
+def caller_scope() -> dict[str, Any]:
+    """The operator's tenancy facts for P16: the supplier portal answers one vendor per request, framed by
+    LedgerPilot's own API as ``Vendor #<id> asks: ...``, and each table here says whose row it is in one column.
+    Receipts and emails carry no vendor column, so P16 refuses them for the portal rather than guess."""
+    return {"tools": ["query_ledger"], "pattern": r"^Vendor #(\d+) asks:",
+            "columns": {"vendors": "id", "purchase_orders": "vendor_id", "invoices": "vendor_id",
+                        "payments": "vendor_id"}}
+
+
 class _RecordingSink:
     def __init__(self) -> None:
         self.calls: list[ToolCall] = []
@@ -133,7 +142,9 @@ class _RecordingSink:
 
     def hold_for_review(self, agent: str, tool: str, args: dict[str, Any], reason: str) -> str:
         self.pending_reviews.append({"agent": agent, "tool": tool, "args": dict(args), "reason": reason})
-        return f"Held for human review: {tool}"
+        # Final, so the model stops: told only "held", it retries the call with small variations until its step limit.
+        return (f"Held for human review: {tool} did not run and will not run until a person approves it. Do not retry "
+                f"it or a variation of it; tell the user the request is waiting for review.")
 
 
 class _GuardAdapter:

@@ -44,7 +44,7 @@ from purpleteam.run_history import Run, RunStore
 from purpleteam.run_control import RunControl
 from purpleteam.hardening_scan import CompositeScanner, PromptHardeningScanner
 from purpleteam.sast import BanditScanner
-from purpleteam.targets.ledgerpilot import LedgerPilotTarget, credentials, discover_profile, reload_source
+from purpleteam.targets.ledgerpilot import LedgerPilotTarget, caller_scope, credentials, discover_profile, reload_source
 
 MODES = ("static", "full", "advanced")
 
@@ -241,6 +241,7 @@ async def assess(run: Run, runs: RunStore | None, snapshots: SourceSnapshots, pu
         assessment = Assessment(
             make_target,
             oracle, profile, ledger, legit=[(LEGIT_INVOICE, not_hijacked)], credentials=creds, blast={},
+            facts={"caller_scope": caller_scope()},
             manifest=manifest,
             explainer=None if ONLY_STATIC else explain, scanner=_attack_scanner(profile), repo=TARGET_REPO, anchorer=anchorer,
             codemod_catalog=catalog, codemod_complete=groq_complete, source_snapshots=snapshots,

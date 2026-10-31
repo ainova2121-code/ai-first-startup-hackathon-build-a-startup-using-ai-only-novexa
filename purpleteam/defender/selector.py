@@ -18,7 +18,9 @@ from purpleteam.discovery import TargetProfile
 from purpleteam.identity import PermissionManifest
 from purpleteam.oversight import HumanReviewGate, ReviewQueue
 from purpleteam.patches.base import CompositeGuard, Patch
-from purpleteam.patches.catalog import FINDING_PATCHES, GLOBAL_PATCHES, PATCH_SUMMARY, fallback_patches
+from purpleteam.patches.caller_scope import CallerScopeGuard
+from purpleteam.patches.catalog import (
+    FINDING_PATCHES, GLOBAL_PATCHES, PATCH_SUMMARY, SCOPED_REPLACES_HOLD, fallback_patches)
 from purpleteam.patches.prompt_hardening import PromptHardeningGuard
 from purpleteam.patches.provenance import ProvenanceGuard
 from purpleteam.patches.rules import (
@@ -86,6 +88,8 @@ class Defender:
     def select(self, finding: Finding) -> Defense:
         ids = [pid for pid in fallback_patches(finding.kind, bool(finding.tool)) if pid not in self._exclude]
         built = [(pid, self._build(pid, finding)) for pid in ids]
+        if self._escalation == 0 and SCOPED_REPLACES_HOLD <= {pid for pid, patch in built if patch is not None}:
+            built = [(pid, patch) for pid, patch in built if pid != "P4"]  # the tool is already confined to its job
         patches = [patch for _, patch in built if patch is not None]
         applied = [{"id": pid, "hash": patch.code_hash(), "summary": PATCH_SUMMARY[pid]}
                    for pid, patch in built if patch is not None]
@@ -114,8 +118,10 @@ class Defender:
             merged[("P11", None)] = ({"id": "P11", "hash": patch.code_hash(),
                                       "summary": f"{PATCH_SUMMARY['P11']} — denied: {names}"}, patch)
             rationale.append(f"escalated: {names} denied")
-        entries = [entry for entry, _ in merged.values()]
-        guard = CompositeGuard([patch for _, patch in merged.values()])
+        # P16 screens first: it reads the caller from the application's framing before any patch (P15) rewraps it.
+        ordered = sorted(merged.values(), key=lambda item: item[0]["id"] != "P16")
+        entries = [entry for entry, _ in ordered]
+        guard = CompositeGuard([patch for _, patch in ordered])
         return Defense([e["id"] for e in entries], guard, "; ".join(rationale), mode=self._mode, applied=entries)
 
     def _scope_key(self, patch_id: str, finding: Finding) -> tuple | str | None:
@@ -160,6 +166,8 @@ class Defender:
             return ProvenanceGuard(self._profile.outside_content_readers, self._profile.value_args)
         if patch_id == "P15":
             return PromptHardeningGuard()
+        if patch_id == "P16":
+            return self._caller_scope(finding)
         return None
 
     def _manifest(self) -> PermissionManifest:
@@ -170,6 +178,26 @@ class Defender:
         if not isinstance(declared, PermissionManifest):
             raise ValueError('facts["manifest"] must be a PermissionManifest')
         return declared
+
+    def _caller_scope(self, finding: Finding) -> Patch | None:
+        """P16 over the finding's tool, when the operator declared which query tools serve one caller per request
+        (``facts["caller_scope"]``: ``tools``, ``columns`` {table: caller-id column}, ``pattern`` -- a regular
+        expression whose first group reads the caller from the application's framing at the start of the input).
+        Declare it only where the application writes that framing itself: a pattern a user's own text could match
+        would let them name their caller. A malformed declaration is refused, never silently dropped."""
+        scope = self._facts.get("caller_scope")
+        if scope is None:
+            return None
+        try:
+            tools, columns, pattern = set(scope["tools"]), dict(scope["columns"]), str(scope["pattern"])
+            if isinstance(scope["tools"], str) or not (columns and re.compile(pattern).groups >= 1):
+                raise ValueError
+        except (KeyError, TypeError, ValueError, re.error) as error:
+            raise ValueError('facts["caller_scope"] needs tools, columns {table: column} and a pattern with one '
+                             'group') from error
+        if finding.tool not in tools:
+            return None
+        return CallerScopeGuard({finding.tool}, columns, pattern, arg=self._facts.get("sql_arg", "sql"))
 
     def _redact_patterns(self) -> list[re.Pattern[str]]:
         """The operator's own value shapes for P9 to redact too (``facts["redact_patterns"]``: regular expressions),

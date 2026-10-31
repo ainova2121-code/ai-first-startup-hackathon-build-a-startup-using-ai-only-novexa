@@ -173,3 +173,12 @@ def test_an_ephemeral_queue_without_a_path_works_but_writes_nothing_to_disk(tmp_
     with pytest.raises(HoldForReview):
         gate.authorize("vendor", "update_vendor_bank", ARGS)
     assert list(tmp_path.iterdir()) == []
+
+
+def test_a_held_call_tells_the_agent_it_is_final_so_it_stops_retrying():
+    from purpleteam.targets.ledgerpilot import _RecordingSink
+    sink = _RecordingSink()
+    message = sink.hold_for_review("inquiry", "query_ledger", {"sql": "SELECT 1"}, "needs review")
+    assert "will not run until a person approves it" in message and "Do not retry" in message
+    assert sink.pending_reviews == [{"agent": "inquiry", "tool": "query_ledger", "args": {"sql": "SELECT 1"},
+                                     "reason": "needs review"}]
