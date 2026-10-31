@@ -29,6 +29,9 @@ class Settings(BaseSettings):
     # For reasoning models (gpt-oss, o-series): how long each call thinks before answering. None sends
     # nothing, so the provider's default applies; "low" answers several times faster.
     llm_reasoning_effort: Literal["low", "medium", "high"] | None = None
+    # Retries per model call on a rate limit or a server error; the client waits as long as the endpoint asks
+    # (its Retry-After), so a free plan's per-minute limit is ridden out instead of failing the call.
+    llm_max_retries: int = Field(default=2, ge=0, le=10)
     approval_threshold: float = Field(default=10_000.0, gt=0)
 
     @property

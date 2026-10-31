@@ -9,6 +9,7 @@ vendor is seeded whose bank account no legitimate output should ever return.
 """
 
 import importlib
+import re
 import shutil
 import sqlite3
 import sys
@@ -152,6 +153,23 @@ class _RecordingSink:
                 f"it or a variation of it; tell the user the request is waiting for review.")
 
 
+_MODEL_STATUS = re.compile(r"Model endpoint returned (\d{3})\b")  # LedgerPilot's own 502 wording (main.py)
+_MODEL_MEANING = {401: "the API key was rejected", 403: "the API key may not use this model",
+                  404: "the model is not available to this key", 413: "the request was too large for the model",
+                  429: "the rate limit was reached", 400: "the model rejected a setting"}
+
+
+def _failure(response: Any) -> str:
+    """Why the target failed, in the platform's words: the HTTP status, and the model endpoint's status when
+    LedgerPilot reports one. Only a three-digit number is read from the target's reply, never its text."""
+    match = _MODEL_STATUS.search(response.text[:200])
+    if not match:
+        return f"HTTP {response.status_code} from the target"
+    code = int(match.group(1))
+    meaning = _MODEL_MEANING.get(code, "the model endpoint failed")
+    return f"HTTP {response.status_code} from the target: its model endpoint answered {code} ({meaning})"
+
+
 class _GuardAdapter:
     """Lets the platform's own, domain-agnostic Guard attach to LedgerPilot's guard port, whose
     contract expects its own ``Blocked`` exception (see ``patches/base.py``): the one place that
@@ -254,6 +272,6 @@ class LedgerPilotTarget:
                 files={"invoice": (self._base["file"], self._pdf, "application/pdf")},
             )
         if response.status_code >= 500:  # LedgerPilot answers 502 when its model endpoint fails (rate limit, bad key)
-            raise TargetUnavailable(f"HTTP {response.status_code} from the target")
+            raise TargetUnavailable(_failure(response))
         return Observation(response.text, list(self._sink.calls), response.status_code,
                            list(self._sink.attempts), list(self._sink.agent_replies))

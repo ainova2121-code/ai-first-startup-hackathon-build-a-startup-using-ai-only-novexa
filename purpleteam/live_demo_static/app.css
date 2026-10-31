@@ -147,6 +147,7 @@ main { padding: 22px 28px 40px; display: grid; gap: 18px; }
 .agroup-state.running { color: var(--steel); background: rgba(76,147,236,.1); animation: dm-blink 1.4s ease-in-out infinite; }
 .agroup-state.breached { color: var(--crimson); background: var(--crimson-dim); }
 .agroup-state.held { color: var(--sage); background: rgba(63,185,107,.1); }
+.agroup-state.inconclusive { color: var(--amber); background: var(--amber-dim); }
 .agroup:has(.agroup-state.running) { border-color: rgba(76,147,236,.45); box-shadow: 0 0 0 1px rgba(76,147,236,.15); }
 .agroup:has(.agroup-state.breached):not(:has(.agroup-state.running)) { border-color: rgba(226,85,85,.4); }
 .agroup-body { display: none; flex-direction: column; gap: 8px; padding: 0 12px 12px; }

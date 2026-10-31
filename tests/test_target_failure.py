@@ -41,7 +41,7 @@ def test_ledgerpilot_raises_instead_of_answering_when_its_model_fails(monkeypatc
     monkeypatch.setenv("LEDGERPILOT_LLM_API_KEY", "test-key-never-sent")
     main = adapter._lp("main")
     monkeypatch.setattr(main, "create_app", functools.partial(main.create_app, llm=_RateLimited(messages=iter([]))))
-    with pytest.raises(TargetUnavailable, match="HTTP 502"):
+    with pytest.raises(TargetUnavailable, match=r"HTTP 502 .* answered 429 \(the rate limit was reached\)"):
         adapter.LedgerPilotTarget().send("Please process the attached invoice.")
 
 

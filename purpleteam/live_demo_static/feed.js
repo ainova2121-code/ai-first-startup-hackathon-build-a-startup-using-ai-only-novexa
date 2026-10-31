@@ -81,13 +81,16 @@ function setOpen(group, open) {
 }
 
 function showGroup(group) {
-  const settled = group.total - group.running;
+  const settled = group.total - group.running, inconclusive = settled - group.breached - group.held;
   group.stats.textContent = `${group.total} attack${group.total === 1 ? "" : "s"}`
     + (settled ? ` · ${group.breached} breached · ${group.held} held` : "")
+    + (inconclusive > 0 ? ` · ${inconclusive} inconclusive` : "")
     + (group.persuaded ? ` (${group.persuaded} only because a control stopped the agent)` : "");
-  const state = group.running ? "running" : group.breached ? "breached" : settled ? "held" : "";
+  // Held needs at least one attack that completed and held: a group whose attacks all failed proved nothing.
+  const state = group.running ? "running" : group.breached ? "breached" : group.held ? "held" : settled ? "inconclusive" : "";
   group.state.className = `agroup-state ${state}`;
-  group.state.textContent = { running: "● running", breached: "BREACHED", held: "HELD", "": "" }[state];
+  group.state.textContent = { running: "● running", breached: "BREACHED", held: "HELD", inconclusive: "INCONCLUSIVE",
+    "": "" }[state];
 }
 
 function attackGroup(e) {

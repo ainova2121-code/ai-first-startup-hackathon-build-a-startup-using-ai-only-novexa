@@ -75,6 +75,7 @@ def chat_model(settings: Settings) -> BaseChatModel:
         api_key=settings.llm_api_key,
         temperature=settings.llm_temperature,
         reasoning_effort=settings.llm_reasoning_effort,
+        max_retries=settings.llm_max_retries,
     )
 
 
