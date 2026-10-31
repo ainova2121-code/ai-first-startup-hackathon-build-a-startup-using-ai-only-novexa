@@ -13,6 +13,12 @@
 The hosted demo signs checkpoints with a software P-256 key, labelled "software" on the page, since a container
 has no TPM; run the console locally to see the hardware TPM co-signature.
 
+**License:** this code is Copyright (c) 2026 Aishwarya R, All Rights Reserved, as stated in [LICENSE](LICENSE). It is
+submitted for hackathon judging only and is not offered under this template repository's MIT license.
+
+**Note:** the GitHub accounts Aishwarya1223 and ainova2121-code both belong to me, Aishwarya R (team Novexa). Claude
+appears as a co-author because this startup was built with AI, as the hackathon requires.
+
 A BYOC AI purple-team platform: it discovers an AI agent system's own agents and tools, attacks it
 with proof-based techniques (a breach must leave hard evidence — a canary value reaching a real tool
 call — never a model's opinion), defends it, re-attacks with the exact payloads that got through to
