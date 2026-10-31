@@ -10,7 +10,7 @@
 <link rel="stylesheet" href="/static/app.css?v=50">
 <link rel="stylesheet" href="/static/ledger.css?v=43">
 <link rel="stylesheet" href="/static/discovery.css?v=44">
-<link rel="stylesheet" href="/static/database.css?v=2">
+<link rel="stylesheet" href="/static/database.css?v=3">
 <link rel="stylesheet" href="/static/inquiry.css?v=1">
 <style>
   /* A tab with no data yet is frozen until its data arrives (see updateTabGates in app.js). */
@@ -214,6 +214,10 @@
           <p>Inspect the real SQLite records used by the demo agents. A clearly labeled seeded preview is shown until a run database is available.</p>
         </div>
         <div class="database-hero-actions">
+          <div id="dbView" class="db-view hidden" role="radiogroup" aria-label="Which database to show">
+            <button type="button" class="db-view-option breach" data-view="breach" role="radio" aria-checked="false">Breach</button>
+            <button type="button" class="db-view-option after active" data-view="after" role="radio" aria-checked="true">After patch</button>
+          </div>
           <span id="dbConnectionState" class="db-connection"><span class="db-connection-dot"></span><span id="dbConnectionText">Waiting for a target run</span></span>
           <button id="dbRefresh" class="btn" type="button" aria-label="Refresh database records">↻ Refresh</button>
         </div>
@@ -359,7 +363,7 @@
 <script src="/static/discovery_panels.js?v=43"></script>
 <script src="/static/feed.js?v=51"></script>
 <script src="/static/expand.js?v=49"></script>
-<script src="/static/database.js?v=4"></script>
+<script src="/static/database.js?v=5"></script>
 <script src="/static/inquiry.js?v=1"></script>
 <script src="/static/app.js?v=59"></script>
 </body>

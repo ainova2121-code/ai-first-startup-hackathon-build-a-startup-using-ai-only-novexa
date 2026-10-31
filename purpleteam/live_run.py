@@ -28,6 +28,7 @@ from purpleteam.attack.converters import OBFUSCATION_TEST_SET
 from purpleteam.audit.anchor import anchor_trust, freetsa
 from purpleteam.audit.hardware_signer import SoftwareP256Signer, resolve_signer
 from purpleteam.audit.ledger import AuditLedger
+from purpleteam.breach_capture import BreachCapture
 from purpleteam.codemods.author import groq_complete
 from purpleteam.codemods.catalog import CodemodCatalog
 from purpleteam.codemods.restore import SourceSnapshots
@@ -215,19 +216,17 @@ async def assess(run: Run, runs: RunStore | None, snapshots: SourceSnapshots, pu
         # the platform is not restricted to the model-free set.
         model_attacks = bool(attacker_model) or not ONLY_STATIC
         publish({"type": "attack_setup", "attacker_model": model_attacks})
+        capture = BreachCapture(oracle, ALL_CANARIES, lambda snapshot: run.write_json("database_breach", snapshot))
+
         def make_target(guard):
             target = LedgerPilotTarget(guard=guard)
             if on_target is not None:
                 on_target(target)
-            return TracedTarget(target, lambda calls: publish(
-                {"type": "trace", "calls": calls, "ts": time.time()}))
+            watched = capture.watch(target) if guard is None else target  # an unpatched copy's breach is kept
+            return TracedTarget(watched, lambda calls: publish({"type": "trace", "calls": calls, "ts": time.time()}))
 
-        # Make the target database visible the moment discovery is done: make_target remembers the instance
-        # (on_target), so the Database page can read it before and during the attacks. A pure PyRIT run also
-        # sends one real legitimate request through it, which both lights the whole green discovery path up
-        # front (its own attack traffic is otherwise sparse and sequential) and fills the database with a real
-        # processed invoice to inspect. The parallel model-free modes already flood the map, so they just
-        # expose the seeded starting state here.
+        # The target database is visible the moment discovery is done (make_target remembers it). A pure PyRIT run
+        # also sends one legitimate request, which lights the discovery path and fills the database to inspect.
         try:
             preview = make_target(None)
             preview.reset()

@@ -27,6 +27,7 @@ import threading
 import time
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Literal
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
@@ -238,19 +239,25 @@ def create_app(snapshots: SourceSnapshots | None = None, target_repo: Path = TAR
             raise HTTPException(404, "no such run")
         return run
 
-    def _database_for(run: Run) -> dict:
+    def _database_for(run: Run, view: str = "after") -> dict:
         baseline = run.read_json("database_baseline")  # the seeded starting state, for marking what the run changed
+        breach = (run.dir / "database_breach.json").is_file()  # kept the moment an attack breached an unpatched copy
+        if view == "breach":
+            if not breach:
+                raise HTTPException(404, "no attack breached this run, so there is no breach snapshot")
+            return {**run.read_json("database_breach"), "run_id": run.id, "live": False, "baseline": baseline,
+                    "snapshot_kind": "breach", "breach_available": True}
         if state.database_target is not None and state.database_target_run_id == run.id:
             try:
                 snapshot = state.database_target.database_snapshot()
             except sqlite3.OperationalError as exc:
                 raise HTTPException(503, "the target database is busy; refresh in a moment") from exc
             return {**snapshot, "run_id": run.id, "live": bool(state.running), "baseline": baseline,
-                    "snapshot_kind": "assessment"}
+                    "snapshot_kind": "assessment", "breach_available": breach}
         snapshot = run.read_json("database")
         if snapshot is not None:
             return {**snapshot, "run_id": run.id, "live": False, "baseline": baseline,
-                    "snapshot_kind": "assessment"}
+                    "snapshot_kind": "assessment", "breach_available": breach}
         if baseline is not None:
             # A run that stopped before its final snapshot still has its genuine pre-attack DB state.
             return {**baseline, "run_id": run.id, "live": False, "baseline": None,
@@ -268,20 +275,22 @@ def create_app(snapshots: SourceSnapshots | None = None, target_repo: Path = TAR
                 "snapshot_kind": "seed_preview"}
 
     @app.get("/database")
-    def current_database() -> dict:
+    def current_database(view: Literal["after", "breach"] = "after") -> dict:
+        if state.run is None and view == "breach":
+            raise HTTPException(404, "no run yet, so there is no breach snapshot")
         if state.run is None:
             return _seed_database_preview()
         try:
-            return _database_for(state.run)
+            return _database_for(state.run, view)
         except HTTPException as exc:
-            if exc.status_code != 404:
+            if exc.status_code != 404 or view == "breach":
                 raise
             # This is a clearly marked, separate seeded preview (not a fabricated historical run).
             return _seed_database_preview()
 
     @app.get("/runs/{run_id}/database")
-    def run_database(run_id: str) -> dict:
-        return _database_for(_run_or_404(run_id))
+    def run_database(run_id: str, view: Literal["after", "breach"] = "after") -> dict:
+        return _database_for(_run_or_404(run_id), view)
 
     @app.get("/runs")
     def list_runs() -> dict:

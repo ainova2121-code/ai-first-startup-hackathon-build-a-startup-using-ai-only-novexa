@@ -216,8 +216,9 @@ class LedgerPilotTarget:
                         for key, value in dict(row).items()
                     })
                 total_rows += len(rows)
+                decoys = [row["id"] for row in rows if name == "vendors" and row.get("name") == HONEYTOKEN_VENDOR]
                 tables.append({"name": name, "label": label, "columns": columns,
-                               "row_count": len(rows), "rows": rows})
+                               "row_count": len(rows), "rows": rows, "decoys": decoys})  # planted by the platform
             return {"database": "LedgerPilot demo database", "engine": "SQLite", "captured_at": time.time(),
                     "total_rows": total_rows, "tables": tables}
         finally:

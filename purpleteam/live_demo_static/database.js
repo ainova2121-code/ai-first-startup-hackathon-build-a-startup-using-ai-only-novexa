@@ -16,6 +16,7 @@
   let loadingUrl = "";
   let requestGeneration = 0;
   let baseIndex = null;  // seeded baseline indexed by table -> primary key, to mark what the run changed (red)
+  let view = "after";    // "breach": the unpatched agent's database the moment an attack breached it
 
   function pkColumns(columns) {
     const pk = columns.filter((c) => c.primary_key).map((c) => c.name);
@@ -38,9 +39,8 @@
   function activeUrl() {
     const picker = $("runPicker");
     const selected = picker?.value;
-    return selected && selected !== "live"
-      ? `/runs/${encodeURIComponent(selected)}/database`
-      : "/database";
+    const base = selected && selected !== "live" ? `/runs/${encodeURIComponent(selected)}/database` : "/database";
+    return view === "breach" ? `${base}?view=breach` : base;
   }
 
   function formatValue(value) {
@@ -58,6 +58,7 @@
     const kind = data.snapshot_kind || "assessment";
     const runValue = kind === "seed_preview" ? "Seed preview" : (data.run_id || "Current");
     const runNote = kind === "seed_preview" ? "not tied to a run"
+      : kind === "breach" ? "breach snapshot"
       : kind === "run_baseline" ? "pre-attack baseline"
       : data.live ? "live snapshot" : "saved snapshot";
     const items = [
@@ -73,11 +74,16 @@
       box.append(stat);
     }
     const badge = $("dbConnectionState");
-    badge.className = `db-connection ${kind === "seed_preview" ? "preview" : data.live ? "live" : "snapshot"}`;
+    badge.className = `db-connection ${kind === "seed_preview" ? "preview" : kind === "breach" ? "breach"
+      : data.live ? "live" : "snapshot"}`;
     $("dbConnectionText").textContent = kind === "seed_preview" ? "SEEDED PREVIEW · no run data"
+      : kind === "breach" ? "BREACH · unpatched agent"
       : kind === "run_baseline" ? "RUN BASELINE · before agent activity"
       : data.live ? "LIVE · reading target" : "SAVED · run snapshot";
-    $("dbExplainerText").textContent = kind === "seed_preview"
+    $("dbExplainerText").textContent = kind === "breach"
+      ? `The unpatched agent's own database, captured the moment an attack breached it. Everything the attack changed `
+        + `against the original is marked in red.${data.proof ? ` Proof: ${data.proof}.` : ""}`
+      : kind === "seed_preview"
       ? "This is the real seeded LedgerPilot SQLite database, shown as a preview because no target run data is available yet. Start a full assessment to switch to its isolated live database; Quick Scan does not create one."
       : kind === "run_baseline"
         ? "This is the real SQLite baseline captured for this run before agent activity. The run ended before a final database snapshot was saved."
@@ -85,6 +91,7 @@
     const updated = data.captured_at ? new Date(data.captured_at * 1000).toLocaleTimeString() : "—";
     $("dbUpdatedAt").textContent = `${data.live ? "Last read" : "Captured"} ${updated}`;
     $("dbSourceText").textContent = kind === "seed_preview" ? "Source: seeded LedgerPilot SQLite preview"
+      : kind === "breach" ? "Source: unpatched target at the moment of breach"
       : kind === "run_baseline" ? "Source: this run’s captured SQLite baseline"
       : data.live ? "Source: live SQLite target snapshot" : "Source: saved SQLite target snapshot";
   }
@@ -182,8 +189,10 @@
     if (!table) return;
     $("dbOriginalTitle").textContent = `Original · ${table.label}`;
     $("dbOriginalDescription").textContent = "before any attack";
-    const rows = table.rows.filter((row) => matchesSearch(row, query));
-    $("dbOriginalCount").textContent = `${rows.length.toLocaleString()} of ${table.row_count.toLocaleString()} records`;
+    const decoys = new Set(table.decoys || []);  // planted by the platform, never the target's own data
+    const own = table.rows.filter((row) => !decoys.has(row.id));
+    const rows = own.filter((row) => matchesSearch(row, query));
+    $("dbOriginalCount").textContent = `${rows.length.toLocaleString()} of ${own.length.toLocaleString()} records`;
     const body = $("dbOriginalBody");
     resetGrid($("dbOriginalHead"), body, table.columns);
     if (!rows.length) body.append(emptyRow(table.columns, query ? "No records match this search." : "This table had no records."));
@@ -200,11 +209,14 @@
     if (!table) return;
     selectedTable = table.name;
     renderOriginal(data, $("dbSearch").value.trim().toLowerCase());
-    $("dbTableTitle").textContent = `Current · ${table.label}`;
-    $("dbTableDescription").textContent = `${table.columns.length} columns · select a row for full values`;
+    $("dbTableTitle").textContent = `${view === "breach" ? "Breach" : "Current"} · ${table.label}`;
+    $("dbTableDescription").textContent = view === "breach" ? "the unpatched agent, right after the attack"
+      : `${table.columns.length} columns · select a row for full values`;
     const query = $("dbSearch").value.trim().toLowerCase();
     const rows = table.rows.filter((row) => matchesSearch(row, query));
-    $("dbRecordCount").textContent = `${rows.length.toLocaleString()} of ${table.row_count.toLocaleString()} records`;
+    const decoys = new Set(table.decoys || []);
+    $("dbRecordCount").textContent = `${rows.length.toLocaleString()} of ${table.row_count.toLocaleString()} records`
+      + (decoys.size ? ` · ${decoys.size} planted decoy` : "");
     const head = $("dbTableHead");
     const body = $("dbTableBody");
     resetGrid(head, body, table.columns);
@@ -218,8 +230,16 @@
       const rowKey = `${table.name}:${row.id ?? index}`;
       const baseRow = baseMap ? baseMap.get(rowKeyForCols(table.columns, row)) : null;
       const isNew = Boolean(baseMap) && !baseRow;  // a row the run created
-      const tr = el("tr", [rowKey === selectedRowKey ? "selected" : "", isNew ? "db-row-new" : ""].filter(Boolean).join(" "));
-      tr.append(el("td", "", row.id ?? index + 1));
+      const decoy = decoys.has(row.id);  // the platform's planted honeytoken: a tripwire, not a change the run made
+      const classes = [rowKey === selectedRowKey && "selected", isNew && "db-row-new", decoy && "db-row-decoy"];
+      const tr = el("tr", classes.filter(Boolean).join(" "));
+      const first = el("td", "", row.id ?? index + 1);
+      if (decoy) {
+        const tag = el("span", "db-decoy", "PLANTED DECOY");
+        tag.title = "Planted by PurpleTeam before any attack: if its value ever appears in an answer, that proves a leak.";
+        first.append(tag);
+      }
+      tr.append(first);
       for (const column of table.columns) {
         const value = row[column.name];
         const changed = !isNew && baseRow && !sameValue(value, baseRow[column.name]);  // a value the run altered
@@ -242,8 +262,26 @@
     $("dbMessage").classList.add("hidden");
     $("dbTableWrap").classList.remove("hidden");
     renderOverview(data);
+    renderViewSwitch(data);
     renderTabs(data);
     renderTable(data);
+  }
+
+  function renderViewSwitch(data) {
+    const box = $("dbView");
+    box.classList.toggle("hidden", !data.breach_available);
+    for (const option of box.children) {
+      const on = option.dataset.view === view;
+      option.classList.toggle("active", on);
+      option.setAttribute("aria-checked", String(on));
+    }
+  }
+
+  function switchView(next) {
+    if (next === view) return;
+    view = next;
+    selectedRowKey = "";
+    loadDatabase(true);
   }
 
   function showMessage(message, error = false) {
@@ -281,6 +319,12 @@
       const response = await fetch(url, { cache: "no-store" });
       const data = await response.json().catch(() => ({}));
       if (generation !== requestGeneration) return;
+      if (!response.ok && view === "breach" && response.status === 404) {  // this run has no breach: show after-patch
+        view = "after";
+        loading = false;
+        loadDatabase(true);
+        return;
+      }
       if (!response.ok) {
         const detail = data.detail || "Could not read the target database.";
         if (response.status === 404) showMessage(activeUrl().startsWith("/runs/")
@@ -299,7 +343,12 @@
 
   $("dbRefresh").addEventListener("click", () => loadDatabase(true));
   $("dbSearch").addEventListener("input", () => { if (snapshot) renderTable(snapshot); });
+  $("dbView").addEventListener("click", (event) => {
+    const option = event.target.closest(".db-view-option");
+    if (option) switchView(option.dataset.view);
+  });
   $("runPicker").addEventListener("change", () => {
+    view = "after";
     snapshot = null;
     selectedTable = "";
     selectedRowKey = "";
