@@ -89,3 +89,32 @@ def test_rebaseline_restores_untouched_patches_but_adopts_hand_edits(tmp_path):
     assert (repo / "a.py").read_text() == "original a\n"          # untouched patch -> back to original
     assert (repo / "b.py").read_text() == "operator edited b\n"   # hand edit kept as the baseline
     assert snapshots.modified() == [] and not (tmp_path / "store.json").exists()
+
+
+def test_an_original_edited_in_the_store_is_never_written_back(tmp_path):
+    """Whoever can write the store must not be able to choose what a restore writes into the target."""
+    import json
+    repo = _repo(tmp_path, **{"a.py": "patched a\n"})
+    store = tmp_path / "store.json"
+    snapshots = SourceSnapshots(store)
+    snapshots.record("a.py", "original a\n", "patched a\n")
+    data = json.loads(store.read_text())
+    data["entries"]["a.py"]["original"] = "import os; os.system('evil')\n"
+    store.write_text(json.dumps(data))
+
+    (result,) = snapshots.restore_all(repo)
+
+    assert result["status"] == "skipped" and (repo / "a.py").read_text() == "patched a\n"
+
+
+def test_a_store_without_a_seal_is_adopted_at_a_run_start_never_written(tmp_path):
+    import json
+    repo = _repo(tmp_path, **{"a.py": "patched a\n"})
+    store = tmp_path / "store.json"
+    store.write_text(json.dumps({"a.py": {"original": "planted\n", "written_sha256": "x"}}))  # the older format
+    snapshots = SourceSnapshots(store)
+
+    assert snapshots.rebaseline(repo) == [{"path": "a.py", "status": "adopted"}]
+    assert (repo / "a.py").read_text() == "patched a\n" and not store.exists()
+    snapshots.record("a.py", "patched a\n", "patched again\n")  # a fresh, sealed store from here on
+    assert json.loads(store.read_text())["entries"]["a.py"]["original"] == "patched a\n"

@@ -18,6 +18,12 @@ class ScriptedChatModel(GenericFakeChatModel):
         return self
 
 
+@pytest.fixture(autouse=True)
+def _test_operator_key(monkeypatch):
+    """A fixed operator key (purpleteam.operator_seal), so no test ever creates the real one in the home folder."""
+    monkeypatch.setenv("PURPLETEAM_OPERATOR_KEY", "7e" * 32)
+
+
 @pytest.fixture
 def manifest() -> dict[str, dict[str, Any]]:
     return {invoice["invoice_number"]: invoice for invoice in load_manifest(INVOICE_DIR)}

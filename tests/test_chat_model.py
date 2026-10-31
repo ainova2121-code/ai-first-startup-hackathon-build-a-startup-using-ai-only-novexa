@@ -4,9 +4,12 @@ heavy classes (HuggingFacePipeline/ChatHuggingFace, which would load real model 
 always faked here; nothing in this file touches a real model or the network.
 """
 
+import httpx
+import openai
 import pytest
+from langchain_openai import ChatOpenAI
 
-from ledgerpilot.main import _local_chat_model, chat_model
+from ledgerpilot.main import RETRY_TEMPERATURES, _local_chat_model, chat_model
 from ledgerpilot.utils.config import Settings
 
 
@@ -26,6 +29,47 @@ def test_the_openai_path_builds_chat_openai_with_the_configured_model(tmp_path):
     settings = Settings(data_dir=tmp_path, llm_api_key="k", llm_model="some/model", llm_base_url="https://x/v1")
     model = chat_model(settings)
     assert model.model_name == "some/model" and str(model.openai_api_base) == "https://x/v1"
+
+
+def _status_error(status, code):
+    response = httpx.Response(status, request=httpx.Request("POST", "https://model.invalid/v1/chat/completions"))
+    return openai.APIStatusError(f"Error code: {status}", response=response, body={"code": code})
+
+
+def _model_failing_with(monkeypatch, tmp_path, errors):
+    """The wrapped model, whose real ChatOpenAI call raises each of ``errors`` in turn, then answers."""
+    sent = []
+
+    def fake_generate(self, messages, stop=None, run_manager=None, **kwargs):
+        sent.append(kwargs.get("temperature"))
+        if len(sent) <= len(errors):
+            raise errors[len(sent) - 1]
+        return "answered"
+
+    monkeypatch.setattr(ChatOpenAI, "_generate", fake_generate)
+    return chat_model(Settings(data_dir=tmp_path, llm_api_key="k")), sent
+
+
+def test_a_generation_the_provider_rejected_is_asked_again_a_little_less_greedily(monkeypatch, tmp_path):
+    errors = [_status_error(400, "output_parse_failed"), _status_error(400, "tool_use_failed")]
+    model, sent = _model_failing_with(monkeypatch, tmp_path, errors)
+    assert model._generate([]) == "answered"
+    assert sent == [None, *RETRY_TEMPERATURES[:2]]  # the first call as configured, then rising temperatures
+
+
+def test_every_other_model_error_is_raised_at_once(monkeypatch, tmp_path):
+    model, sent = _model_failing_with(monkeypatch, tmp_path, [_status_error(400, "invalid_api_key")])
+    with pytest.raises(openai.APIStatusError):
+        model._generate([])
+    assert len(sent) == 1
+
+
+def test_a_generation_rejected_every_time_raises_after_the_last_retry(monkeypatch, tmp_path):
+    errors = [_status_error(400, "output_parse_failed")] * (len(RETRY_TEMPERATURES) + 1)
+    model, sent = _model_failing_with(monkeypatch, tmp_path, errors)
+    with pytest.raises(openai.APIStatusError):
+        model._generate([])
+    assert len(sent) == len(RETRY_TEMPERATURES) + 1
 
 
 def test_the_local_provider_never_needs_an_api_key(tmp_path, monkeypatch):

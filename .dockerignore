@@ -7,6 +7,10 @@ __pycache__
 .env.*
 !.env.example
 data/*.db
+.purpleteam
+deploy/secrets
+.uv-cache*
+screenshots
 tests
 *.md
 NOTICE

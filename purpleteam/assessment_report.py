@@ -39,6 +39,8 @@ class AssessmentReport:
     decisions: dict = field(default_factory=dict)  # every verified decision's inputs and outcome (purpleteam.decisions)
     policy: dict = field(default_factory=dict)  # what rebuilds the verified defense (defender.policy.policy_data)
     decision_drift: list[dict] = field(default_factory=list)  # decisions that changed since the approved baseline
+    guarded: list[Finding] = field(default_factory=list)  # the findings the runtime guard answers (not code-held ones)
+    code_held: list[str] = field(default_factory=list)  # attacks the verified source fixes held with no runtime guard
 
     @property
     def safe_to_ship(self) -> bool:
@@ -83,6 +85,7 @@ class AssessmentReport:
                          "upper_bound": r.upper_bound} for r in self.results],
             "findings": [asdict(f) for f in self.findings],  # asdict already recurses into the signals tuple
             "patches": self.defense.applied if self.defense else [],
+            "code_held": self.code_held,
             "verification": verification,
             "explanations": [asdict(e) for e in self.explanations],
             "identity": self.identity,

@@ -246,3 +246,29 @@ def test_parallel_replays_still_count_a_breach_in_any_trial():
     report = verify(None, ORACLE, attacks=["ATTACK"], legit=[("LEGIT", _paid)], trials=3,
                     factory=lambda: _Scripted({"ATTACK": next(copies), "LEGIT": PAID}))
     assert not report.attack_blocked and any("1 of 3" in f for f in report.failures)
+
+
+def test_payloads_that_opened_one_hole_share_its_replays_and_its_bound():
+    """Five phrasings of one planted value are one hole to close: the gate's trials are shared, each payload is
+    still sent, and every payload carries the hole's pooled bound -- one breach anywhere still fails it."""
+    from purpleteam.attack.outcome import upper_bound
+
+    sent = []
+
+    class _Held:
+        def reset(self):
+            pass
+
+        def send(self, request):
+            sent.append(request)
+            return Observation("held", [])
+
+    hole = ("injection_action", "update_vendor_bank", "vendor")
+    attacks = ["A", "B", "C", "D", "E", "OTHER"]
+    replays = []
+    report = verify(None, ORACLE, attacks=attacks, legit=[("LEGIT", lambda obs: True)], trials=4,
+                    holes=[hole] * 5 + [("other", "t", "a")], factory=_Held, on_attack_result=replays.append)
+
+    assert sorted(set(sent) - {"LEGIT"}) == attacks and sent.count("A") == 1 and sent.count("OTHER") == 4
+    assert [r.upper_bound for r in replays[:5]] == [upper_bound(0, 5)] * 5  # pooled over the hole's five trials
+    assert report.safe_to_ship

@@ -19,7 +19,19 @@ def connect(path: Path) -> sqlite3.Connection:
     conn.row_factory = lambda cursor, row: {col[0]: value for col, value in zip(cursor.description, row)}
     conn.execute("PRAGMA journal_mode=WAL")  # the poller writes while web requests read, concurrently
     conn.executescript(_SCHEMA.read_text())
+    _add_missing_columns(conn)
     return conn
+
+
+_TRUST_COLUMNS = ("trust_json", "trust_source", "verifier_json")
+
+
+def _add_missing_columns(conn: sqlite3.Connection) -> None:
+    """A store created before evidence verification existed gets its columns; existing targets start unpinned."""
+    present = {column["name"] for column in conn.execute("PRAGMA table_info(targets)").fetchall()}
+    for column in _TRUST_COLUMNS:
+        if column not in present:
+            conn.execute(f"ALTER TABLE targets ADD COLUMN {column} TEXT")  # nosec B608: fixed column names
 
 
 class _Repository:
@@ -37,10 +49,12 @@ class _Repository:
 
 
 class TargetRepository(_Repository):
-    def add(self, id: str, name: str, base_url: str, admin_key_enc: bytes, created_at: float) -> None:
+    def add(self, id: str, name: str, base_url: str, admin_key_enc: bytes, created_at: float,
+            trust_json: str | None = None, trust_source: str | None = None) -> None:
         self._write(
-            "INSERT INTO targets (id, name, base_url, admin_key_enc, created_at) VALUES (?, ?, ?, ?, ?)",
-            id, name, base_url, admin_key_enc, created_at)
+            "INSERT INTO targets (id, name, base_url, admin_key_enc, created_at, trust_json, trust_source)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            id, name, base_url, admin_key_enc, created_at, trust_json, trust_source)
 
     def get(self, id: str) -> Row | None:
         return self._one("SELECT * FROM targets WHERE id = ?", id)
@@ -57,6 +71,15 @@ class TargetRepository(_Repository):
         self._write(
             "UPDATE targets SET log_id = ?, last_seq = ?, status = ?, last_error = ?, polled_at = ? WHERE id = ?",
             log_id, last_seq, status, last_error, polled_at, id)
+
+    def pin_trust(self, id: str, trust_json: str, source: str) -> None:
+        """Pin new keys and forget how far the old ones verified: the log is verified again from its first event."""
+        self._write("UPDATE targets SET trust_json = ?, trust_source = ?, verifier_json = NULL, last_seq = -1, "
+                    "log_id = NULL WHERE id = ?", trust_json, source, id)
+        self._write("DELETE FROM target_status WHERE target_id = ?", id)
+
+    def save_verifier(self, id: str, verifier_json: str) -> None:
+        self._write("UPDATE targets SET verifier_json = ? WHERE id = ?", verifier_json, id)
 
     def set_status(self, target_id: str, *, size: int, safe_to_ship: bool | None, sealed_at: float | None,
                   breach_kinds_json: str, updated_at: float) -> None:

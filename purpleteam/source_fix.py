@@ -18,7 +18,7 @@ from typing import Any, Callable
 
 from purpleteam.codemods.apply import apply_approved
 from purpleteam.codemods.author import Complete
-from purpleteam.codemods.base import VerificationFailed, VerifiedCodemod
+from purpleteam.codemods.base import CodemodCandidate, VerificationFailed, VerifiedCodemod
 from purpleteam.codemods.catalog import HUMAN_REVIEWED, CodemodCatalog, pattern_key
 from purpleteam.codemods.context import fix_context, source_statement
 from purpleteam.codemods.gate import gate_candidate
@@ -119,6 +119,8 @@ async def _approved(finding: StaticFinding, repo: Path, path: Path, scanner: Sca
     original = source_statement(path, finding.line)
     key = pattern_key(finding.kind, original)
     cached = catalog.get(key)
+    if cached is not None and not await asyncio.to_thread(_still_verifies, cached, finding, path, scanner):
+        cached = None  # a stale entry (an older transform, say) is derived again below, never left to block the fix
     if cached is not None:  # the label it was approved under travels with every reuse
         approval = catalog.approval(key)
         return cached, f"reused from the catalog (exact source match): {approval}", approval == HUMAN_REVIEWED
@@ -140,6 +142,15 @@ async def _approved(finding: StaticFinding, repo: Path, path: Path, scanner: Sca
                                                         "verified_by": list(drafted.verified_by),
                                                         "approval": AUTO_APPROVAL})
     return drafted, AUTO_APPROVAL, False
+
+
+def _still_verifies(codemod: VerifiedCodemod, finding: StaticFinding, path: Path, scanner: Scanner) -> bool:
+    try:
+        verify(CodemodCandidate(codemod.kind, codemod.original, codemod.replacement, codemod.explanation),
+               finding, path, scanner)
+    except VerificationFailed:
+        return False
+    return True
 
 
 async def _deterministic(finding: StaticFinding, original: str, path: Path, scanner: Scanner,

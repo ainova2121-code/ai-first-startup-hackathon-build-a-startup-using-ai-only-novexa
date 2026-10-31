@@ -174,7 +174,11 @@ class AuditLedger:
     def export_trust(self) -> dict:
         """Public keys plus a fresh checkpoint (and the hardware key, if any): pin this somewhere separate from the log."""
         checkpoint = self.checkpoint()
-        trust = {"keys": self._keyring.public_keys(), "checkpoint": checkpoint}
+        return {**self.public_trust(), "checkpoint": checkpoint}
+
+    def public_trust(self) -> dict:
+        """The public keys (and revocations) a reader verifies events against, with no checkpoint to sign."""
+        trust = {"keys": self._keyring.public_keys()}
         if self._hardware is not None:
             trust["hardware"] = self._hardware_trust_own()
         revoked = self._keyring.revoked()

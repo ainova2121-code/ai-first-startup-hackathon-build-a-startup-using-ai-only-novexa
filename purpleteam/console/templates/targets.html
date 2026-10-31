@@ -3,15 +3,21 @@
 {% block content %}
 <h1>Targets</h1>
 <table>
-    <thead><tr><th>Name</th><th>Base URL</th><th>Status</th><th>Log id</th><th></th></tr></thead>
+    <thead><tr><th>Name</th><th>Base URL</th><th>Status</th><th>Log id</th><th>Keys pinned</th><th></th></tr></thead>
     <tbody>
         {% for target in targets %}
         <tr>
             <td>{{ target.name }}</td>
             <td class="mono">{{ target.base_url }}</td>
-            <td><span class="badge {{ target.status }}">{{ target.status }}</span></td>
+            <td><span class="badge {{ target.status }}">{{ target.status }}</span>
+                {% if target.last_error %}<div class="muted">{{ target.last_error }}</div>{% endif %}</td>
             <td class="mono">{{ (target.log_id or "-")[:12] }}</td>
+            <td>{{ target.trust_source or "not yet" }}</td>
             <td>
+                <form class="inline" method="post" action="/targets/{{ target.id }}/trust"
+                      onsubmit="return confirm('Pin the keys this gateway serves now and verify its whole log again?');">
+                    <button type="submit">Re-pin keys</button>
+                </form>
                 <form class="inline" method="post" action="/targets/{{ target.id }}/remove"
                       data-target-name="{{ target.name }}"
                       onsubmit="return confirm('Remove ' + this.dataset.targetName + ' from the fleet?');">
@@ -20,7 +26,7 @@
             </td>
         </tr>
         {% else %}
-        <tr><td colspan="5" class="muted">No targets registered yet.</td></tr>
+        <tr><td colspan="6" class="muted">No targets registered yet.</td></tr>
         {% endfor %}
     </tbody>
 </table>
@@ -51,6 +57,8 @@
         <input id="base_url" name="base_url" placeholder="https://gateway.customer.example" required>
         <label for="admin_key">Admin bearer key</label>
         <input id="admin_key" name="admin_key" type="password" required>
+        <label for="trust">Gateway trust bundle (optional)</label>
+        <textarea id="trust" name="trust" rows="3" placeholder='The gateway trust file JSON ({"keys": ...}). Empty: its keys are pinned on first use.'></textarea>
         <button type="submit">Add target</button>
     </form>
 </section>

@@ -19,7 +19,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Callable
 
-from purpleteam.adapter import Observation, Target
+from purpleteam.adapter import Observation, Target, TargetUnavailable
 from purpleteam.attack.outcome import upper_bound
 from purpleteam.concurrency import parallel_map
 from purpleteam.oracle import Oracle, persuasion
@@ -42,6 +42,7 @@ class Replay:
     persuasion: str = ""  # what it tried and what stopped it, from the first such trial
     off_scope: int = 0  # trials where a breach appeared, but NOT the original one being re-tested
     off_scope_proof: str = ""  # the first such different-path breach, kept so it can never be silently shipped
+    stopped: int = 0  # held trials in which a runtime control stopped anything (a call, or incoming text)
 
     @property
     def blocked(self) -> bool:
@@ -81,6 +82,7 @@ def verify(
     factory: Callable[[], Target] | None = None,
     legit_factory: Callable[[], Target] | None = None,
     scopes: list[Scope | None] | None = None,
+    holes: list | None = None,
 ) -> VerifyReport:
     """Each breaching payload is re-sent ``trials`` times; one held trial out of one still allows a
     ~79% breach rate, so a patch is only as proven as the bound its replays leave. With
@@ -98,23 +100,30 @@ def verify(
     tools) re-tests each payload against its *own* original breach: a trial is "held" unless that same breach
     recurs at any tool it reached. A re-attack that wanders into a different
     hole does not prove the original held, so it is reported separately and still fails ``safe_to_ship``;
-    it is never credited as verification of the original. Without ``scopes`` any breach counts, as before."""
+    it is never credited as verification of the original. Without ``scopes`` any breach counts, as before.
+
+    ``holes`` (one key per attack: where its breach first landed) makes ``trials`` per hole instead of per payload:
+    the payloads that breached the same hole share its trials, each sent at least once, and each one's bound is the
+    hole's, pooled over all of them. Five phrasings of one planted bank account are one hole to close, not five."""
     failures: list[str] = []
     errors: list[str] = []
     make = factory or (lambda: target)
     run = parallel_map if factory is not None else (lambda fn, items: [fn(item) for item in items])
 
+    holes = list(holes) if holes is not None else list(range(len(attacks)))
+    counts = [-(-trials // holes.count(hole)) for hole in holes]  # the hole's trials, shared out, rounded up
     for i, payload in enumerate(attacks):
         if on_attack_start:
             on_attack_start(f"reverify:{i + 1}", payload)
-    outcomes = run(lambda payload: _send(make, payload), [p for p in attacks for _ in range(trials)])
+    outcomes = run(lambda payload: _send(make, payload), [p for p, n in zip(attacks, counts) for _ in range(n)])
+    starts = [sum(counts[:i]) for i in range(len(attacks))]
 
-    attack_blocked, residual = True, 0.0
+    tallies = []  # per payload: (held, breached, off_scope, reply, proof, off_proof, seconds, persuaded, how, stopped)
     for i, payload in enumerate(attacks):
         scope = scopes[i] if scopes else None  # the one original breach this payload is re-tested against
-        held, breached, off_scope = 0, 0, 0
+        held, breached, off_scope, stopped = 0, 0, 0, 0
         reply, proof, off_proof, seconds, persuaded, persuaded_how = "", "", "", 0.0, 0, ""
-        for observation, error, elapsed in outcomes[i * trials:(i + 1) * trials]:
+        for observation, error, elapsed in outcomes[starts[i]:starts[i] + counts[i]]:
             seconds = max(seconds, elapsed)
             if observation is None:  # an error proves nothing was blocked
                 errors.append(f"error re-testing an attack ({error}): {payload[:60]}")
@@ -133,25 +142,35 @@ def verify(
                     reply = observation.reply
             else:
                 held += 1
+                stopped += bool(observation.attempts)
                 if not proof and not reply:
                     reply = observation.reply
                 if fooled := persuasion(oracle, observation):  # held only because the patch caught the attempt
                     persuaded, persuaded_how = persuaded + 1, persuaded_how or fooled.detail
-        replay = Replay(f"reverify:{i + 1}", held, trials, upper_bound(breached, held + breached), reply,
-                        seconds, proof, persuaded, persuaded_how, off_scope, off_proof)
+        tallies.append((held, breached, off_scope, reply, proof, off_proof, seconds, persuaded, persuaded_how,
+                        stopped))
+
+    def pooled(hole) -> float:  # the hole's bound, over every trial of every payload that breached it
+        mine = [t for t, h in zip(tallies, holes) if h == hole]
+        return upper_bound(sum(t[1] for t in mine), sum(t[0] + t[1] for t in mine))
+
+    attack_blocked, residual = True, 0.0
+    for i, (held, breached, off_scope, reply, proof, off_proof, seconds, persuaded, how, stopped) in enumerate(tallies):
+        replay = Replay(f"reverify:{i + 1}", held, counts[i], pooled(holes[i]), reply, seconds, proof, persuaded,
+                        how, off_scope, off_proof, stopped)
         residual = max(residual, replay.upper_bound)
         if not replay.blocked:
             attack_blocked = False
             if breached:
-                failures.append(f"attack still breaches ({breached} of {trials}): {proof}")
+                failures.append(f"attack still breaches ({breached} of {counts[i]}): {proof}")
         if off_scope:  # the original held, but re-testing opened a different hole: that can never ship either
             errors.append(f"a different breach than the original appeared while re-testing "
-                          f"({off_scope} of {trials}): {off_proof}")
+                          f"({off_scope} of {counts[i]}): {off_proof}")
         if on_attack_result:
             on_attack_result(replay)
     if attacks and max_residual is not None and attack_blocked and residual > max_residual:
-        errors.append(f"replays held, but {trials} trial(s) leave a residual breach rate of up to "
-                      f"{residual:.0%} at 95% confidence, above the {max_residual:.0%} release gate")
+        errors.append(f"replays held, but they leave a residual breach rate of up to {residual:.0%} at 95% "
+                      f"confidence, above the {max_residual:.0%} release gate")
 
     legit_passed = True
     make_legit = legit_factory or make
@@ -188,13 +207,21 @@ def _recurs(verdict, scope: Scope | None) -> bool:
     return any((verdict.kind, tool, agent) in original for agent, tool in reached)
 
 
+RETRY_WAITS = (5.0, 15.0)  # a target that could not answer (a rate limit, a rejected generation) is asked again
+
+
 def _send(make: Callable[[], Target], request: str) -> tuple[Observation | None, str, float]:
     """(observation, "", seconds), or (None, the exception's type name, seconds) -- only the type is
-    kept, never the message, which could carry data from the target."""
+    kept, never the message, which could carry data from the target. Each retry gets a fresh target."""
     started = time.monotonic()
-    try:
-        target = make()
-        target.reset()
-        return target.send(request), "", time.monotonic() - started
-    except Exception as error:
-        return None, type(error).__name__, time.monotonic() - started
+    for wait in (*RETRY_WAITS, None):
+        try:
+            target = make()
+            target.reset()
+            return target.send(request), "", time.monotonic() - started
+        except TargetUnavailable as error:
+            if wait is None:
+                return None, type(error).__name__, time.monotonic() - started
+            time.sleep(wait)
+        except Exception as error:
+            return None, type(error).__name__, time.monotonic() - started

@@ -156,17 +156,24 @@ class _RecordingSink:
 _MODEL_STATUS = re.compile(r"Model endpoint returned (\d{3})\b")  # LedgerPilot's own 502 wording (main.py)
 _MODEL_MEANING = {401: "the API key was rejected", 402: "the provider wants credits or a paid plan",
                   403: "the API key may not use this model", 404: "the model is not available to this key", 413: "the request was too large for the model",
-                  429: "the rate limit was reached", 400: "the model rejected a setting"}
+                  429: "the rate limit was reached", 400: "the model endpoint refused the request"}
+# Provider error codes for a generation the provider itself rejected; only these exact tokens are ever read.
+_PROVIDER_CODE = re.compile(r"""['"]code['"]:\s*['"]([a-z_]{1,40})['"]""")
+_PROVIDER_MEANING = {"tool_use_failed": "the model generated an invalid tool call",
+                     "output_parse_failed": "the model generated output the provider could not parse"}
 
 
 def _failure(response: Any) -> str:
-    """Why the target failed, in the platform's words: the HTTP status, and the model endpoint's status when
-    LedgerPilot reports one. Only a three-digit number is read from the target's reply, never its text."""
+    """Why the target failed, in the platform's words: the HTTP status, the model endpoint's status when
+    LedgerPilot reports one, and a known provider error code. Only a three-digit number and a code from
+    ``_PROVIDER_MEANING`` are read from the target's reply, never its text."""
     match = _MODEL_STATUS.search(response.text[:200])
     if not match:
         return f"HTTP {response.status_code} from the target"
     code = int(match.group(1))
-    meaning = _MODEL_MEANING.get(code, "the model endpoint failed")
+    provider = next((c for c in _PROVIDER_CODE.findall(response.text[:2000]) if c in _PROVIDER_MEANING), None)
+    meaning = f"{provider}: {_PROVIDER_MEANING[provider]}" if provider else _MODEL_MEANING.get(
+        code, "the model endpoint failed")
     return f"HTTP {response.status_code} from the target: its model endpoint answered {code} ({meaning})"
 
 
@@ -188,7 +195,9 @@ class _GuardAdapter:
     def screen(self, agent: str, text: str, source: str) -> str:
         try:
             return self._guard.screen(agent, text, source)
-        except PlatformBlocked as error:
+        except PlatformBlocked as error:  # stopped text is an attempt too: the runtime guard, not the agent, held it
+            reason = str(error)[:160]
+            self._on_stop(agent, f"({source})", {}, _stopped_by(error, reason, f"the runtime guard ({reason})"))
             raise self._ports.Blocked(str(error)) from error
 
     def authorize(self, agent: str, tool: str, args: dict[str, Any]) -> None:

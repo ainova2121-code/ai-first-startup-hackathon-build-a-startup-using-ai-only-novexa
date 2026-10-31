@@ -8,7 +8,10 @@ CREATE TABLE IF NOT EXISTS targets (
     status        TEXT NOT NULL DEFAULT 'unknown',
     last_error    TEXT,
     created_at    REAL NOT NULL,
-    polled_at     REAL
+    polled_at     REAL,
+    trust_json    TEXT,  -- the gateway's pinned public keys: every exported event is verified against them
+    trust_source  TEXT,  -- "operator" (pasted at registration) or "first use" (fetched from the gateway once)
+    verifier_json TEXT   -- purpleteam.audit.stream state: how far the log has verified, never the events
 );
 
 -- A derived cache of each target's latest-known state, rebuildable from scratch by re-polling.

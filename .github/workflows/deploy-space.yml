@@ -1,0 +1,41 @@
+# Deploys the live demo to a Hugging Face Space on every push to main: Hugging Face builds the root Dockerfile on its
+# own servers, so nobody runs Docker locally. Each deploy is one fresh snapshot commit (binary files in Git LFS, the
+# Space's config block added to its README), so the Space never inherits this repository's history.
+#
+# One-time setup:
+#   - On huggingface.co: create a Space with SDK "Docker"; in its settings add the secret LEDGERPILOT_LLM_API_KEY
+#     and the variable PURPLETEAM_CONCURRENCY=4.
+#   - On GitHub (Settings -> Secrets and variables -> Actions): the secret HF_TOKEN (a Hugging Face token with
+#     write access) and the variable HF_SPACE (<user>/<space>).
+# Actions are pinned by commit SHA, matching every other workflow here.
+name: Deploy demo to Hugging Face
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Push a snapshot to the Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          HF_SPACE: ${{ vars.HF_SPACE }}
+        run: |
+          test -n "$HF_TOKEN" && test -n "$HF_SPACE" || { echo "Set the HF_TOKEN secret and HF_SPACE variable"; exit 1; }
+          git config user.name "deploy-bot" && git config user.email "deploy-bot@users.noreply.github.com"
+          git lfs install --local
+          git checkout --orphan space
+          git lfs track "*.pdf" "*.tsr" "screenshots/*"
+          printf -- '---\ntitle: AIQ Security purple team\nemoji: 🛡️\ncolorFrom: indigo\ncolorTo: purple\nsdk: docker\napp_port: 7860\npinned: false\n---\n\n' \
+            | cat - README.md > README.space && mv README.space README.md
+          git rm -r -q --cached .  # re-stage everything, so the binaries go through the LFS filter
+          git add -A
+          git commit -q -m "Deploy ${GITHUB_SHA::7}"
+          git push --force "https://user:${HF_TOKEN}@huggingface.co/spaces/${HF_SPACE}" space:main

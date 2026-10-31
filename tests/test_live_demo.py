@@ -205,3 +205,13 @@ def test_app_factory_refuses_to_start_without_a_configured_target_model(monkeypa
     monkeypatch.setenv("HF_TOKEN", "")
     with pytest.raises(RuntimeError, match="no target model is configured"):
         live_demo.app()
+
+
+def test_the_demo_full_dataset_is_exactly_its_breaching_attacks_and_two_controls():
+    from purpleteam.attack.claims import model_free_attacks
+    from purpleteam.showcase import DEMO_DATASET, demo_dataset
+    from purpleteam.targets.ledgerpilot import discover_profile
+
+    templates = model_free_attacks(discover_profile())
+    assert [t.id for t in demo_dataset(templates)] == list(DEMO_DATASET)  # every id still exists on the target
+    assert demo_dataset(templates[:1]) == templates[:1]  # a changed target falls back to the whole dataset

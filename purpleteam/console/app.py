@@ -6,6 +6,7 @@ route, not a FastAPI Depends; interactive docs suppressed the same way.
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 import time
 import uuid
@@ -19,6 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from purpleteam.audit.compliance import evidence_report
+from purpleteam.audit.stream import StreamVerifier
 from purpleteam.audit.trend import runs as trend_runs
 from purpleteam.console import crypto
 from purpleteam.console.auth import (
@@ -26,15 +28,25 @@ from purpleteam.console.auth import (
 from purpleteam.console.db.repositories import SessionRepository, TargetRepository, UserRepository, connect
 from purpleteam.console.deploy import plan_deployment
 from purpleteam.console.events import Broadcaster
-from purpleteam.console.gateway_client import GatewayAuthError, GatewayUnreachable, fetch_events
-from purpleteam.console.poller import FleetPoller
-from purpleteam.console.registry import FleetRegistry
+from purpleteam.console.gateway_client import GatewayAuthError, GatewayUnreachable, fetch_events, fetch_trust
+from purpleteam.console.poller import FleetPoller, pinned_trust
+from purpleteam.console.registry import FIRST_USE, OPERATOR, FleetRegistry, check_base_url
 from purpleteam.console.sse import sse_events
 from purpleteam.gateway import MAX_EXPORT
 
 COOKIE = "console_session"
 _TEMPLATES = Jinja2Templates(directory=str(Path(__file__).with_name("templates")))
 _STATIC = Path(__file__).with_name("static")
+
+
+def _trust_bundle(text: str) -> dict | None:
+    """A pasted trust bundle, or None when the field was left empty. ValueError for anything that is not JSON."""
+    if not text.strip():
+        return None
+    try:
+        return json.loads(text)
+    except ValueError:
+        raise ValueError("the trust bundle is not valid JSON") from None
 
 
 def _bootstrap_admin(users: UserRepository) -> str:
@@ -82,7 +94,8 @@ def create_console(db_path: Path, *, secret_key: str, poll_seconds: float = 15.0
         return session
 
     async def fetch_fresh(target_id: str) -> tuple[list[dict] | None, str | None]:
-        """The authoritative view for one target: fetched live, never the best-effort cache.
+        """The authoritative view for one target: fetched live, never the best-effort cache, and verified from
+        its first event against the gateway's pinned keys -- evidence that does not verify is never shown.
         Capped at one page (MAX_EXPORT events) -- a target busier than that needs a windowed UI
         this phase does not build yet."""
         credentials = registry.credentials_for(target_id)
@@ -90,10 +103,21 @@ def create_console(db_path: Path, *, secret_key: str, poll_seconds: float = 15.0
             return None, "target not found"
         base_url, admin_key = credentials
         try:
+            verifier = StreamVerifier(await pinned_trust(registry, http, target_id, base_url, admin_key))
             page = await fetch_events(http, base_url, admin_key, after_seq=-1, limit=MAX_EXPORT)
         except (GatewayAuthError, GatewayUnreachable) as error:
             return None, str(error)
+        except ValueError as error:
+            return None, f"evidence cannot be verified: {error}"
+        result = verifier.feed(page.events)
+        if not result.ok:
+            return None, f"evidence failed verification at event {result.broken_at}: {result.reason}"
         return page.events, None
+
+    def targets_error(request: Request, session: Session, error: str):
+        return _TEMPLATES.TemplateResponse(
+            request, "targets.html", {"session": session, "targets": registry.list_targets(), "error": error},
+            status_code=400)
 
     @app.get("/login", response_class=HTMLResponse)
     async def login_page(request: Request):
@@ -146,14 +170,33 @@ def create_console(db_path: Path, *, secret_key: str, poll_seconds: float = 15.0
                                            {"session": session, "targets": registry.list_targets(), "error": None})
 
     @app.post("/targets")
-    async def targets_add(request: Request, name: str = Form(), base_url: str = Form(), admin_key: str = Form()):
+    async def targets_add(request: Request, name: str = Form(), base_url: str = Form(), admin_key: str = Form(),
+                          trust: str = Form("")):
+        """``trust``: the gateway's public keys (its trust file, or ``/ledger/trust``), pinned now; left empty,
+        they are fetched from the gateway and pinned on first use."""
         session = require_role(request, ADMIN)
-        if not base_url.startswith(("http://", "https://")):
-            return _TEMPLATES.TemplateResponse(
-                request, "targets.html",
-                {"session": session, "targets": registry.list_targets(), "error": "base_url must be http(s)"},
-                status_code=400)
-        registry.add_target(name, base_url, admin_key)
+        try:
+            registry.add_target(name, check_base_url(base_url), admin_key, _trust_bundle(trust))
+        except ValueError as error:
+            return targets_error(request, session, str(error))
+        return RedirectResponse("/targets", status_code=303)
+
+    @app.post("/targets/{target_id}/trust")
+    async def targets_repin(request: Request, target_id: str, trust: str = Form("")):
+        """Pin new keys -- pasted, or fetched from the gateway again -- after the gateway's signing keys changed.
+        The whole log is then verified again from its first event."""
+        session = require_role(request, ADMIN)
+        credentials = registry.credentials_for(target_id)
+        if credentials is None:
+            raise HTTPException(404, "no such target")
+        try:
+            bundle = _trust_bundle(trust)
+            if bundle is not None:
+                registry.pin_trust(target_id, bundle, OPERATOR)
+            else:
+                registry.pin_trust(target_id, await fetch_trust(http, *credentials), FIRST_USE)
+        except (ValueError, GatewayAuthError, GatewayUnreachable) as error:
+            return targets_error(request, session, f"could not pin the gateway's keys: {error}")
         return RedirectResponse("/targets", status_code=303)
 
     @app.post("/targets/deploy", response_class=HTMLResponse)

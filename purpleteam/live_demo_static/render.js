@@ -150,6 +150,13 @@ function renderStaticScan(e) {
 
 const fixRows = {};
 
+function renderFindingDetected(e) {
+  const where = e.tool ? `${e.agent || "agent"} → ${e.tool}` : (e.agent || "the agent");
+  defenseCard(`Breach proven at ${where}`, "defender patching", "risk-delete",
+              `${e.id}: the defender chose ${(e.patch_ids || []).join(", ") || "no runtime guard"} and is writing the `
+              + "code fix now. Both load after the last attack, so every attack still meets the original agent.");
+}
+
 function renderFixAttempt(e) {
   const key = `${e.path}:${e.line}`;
   const card = defenseCard(`Fixing ${e.kind} at ${key}`, "drafting + verifying", "risk-external");
@@ -162,32 +169,54 @@ function settleFix(e) {
   return key;
 }
 
+// Every edit to a file, so the file is shown once with all of them highlighted. Edits within a file arrive bottom-up,
+// so an edit that changes the line count moves the earlier-recorded edits below it, never above.
+const patchedFiles = new Map();  // path -> {edits: [{start, before, after, meta}], content, sha256, live, list}
+
 function renderSourcePatch(e) {
   settleFix(e);
-  const liveCard = fileCard(e, $("defense"), true);  // show the real edit before the re-attack
-  liveSourcePatchCards.set(e.path, liveCard);
-  fileCard(e, $("filesList"), false);    // one click to open on its own page
+  let file = patchedFiles.get(e.path);
+  if (!file || !file.list.isConnected) {  // a new run (or a replayed one) starts every file afresh
+    file = { edits: [], live: null, list: null };
+    patchedFiles.set(e.path, file);
+  }
+  const start = e.line - 1;  // the first replaced line, 0-based, in the file as written by this edit
+  const shift = e.after_lines.length - e.before_lines.length;
+  for (const edit of file.edits) if (edit.start > start) edit.start += shift;
+  file.edits.push({ start, before: e.before_lines, after: e.after_lines, explanation: e.explanation,
+                    meta: `${e.kind} at line ${e.line} · ${e.approval}. Verified by: ${e.verified_by.join(" + ")}.` });
+  file.edits.sort((a, b) => a.start - b.start);
+  Object.assign(file, { content: e.content, sha256: e.sha256 });
+  file.live = place(fileCard(e.path, file, $("defense"), true), file.live);  // the real edit, before the re-attack
+  file.list = place(fileCard(e.path, file, $("filesList"), false), file.list);  // one click to open on its own page
+  liveSourcePatchCards.set(e.path, file.live);
   $("filesEmpty").classList.add("hidden");
   const count = $("filesCount");
-  count.textContent = String(Number(count.textContent || 0) + 1);
+  count.textContent = String([...patchedFiles.values()].filter((f) => f.list.isConnected).length);  // files, not edits
   count.classList.remove("hidden");
   refreshModified();
 }
 
-function fileCard(e, box, open) {
-  const card = defenseCard(`Source patch before reverification: ${e.path}`, "EDIT Successfully applied", "risk-delete",
-                           `${e.kind} at line ${e.line} · ${e.approval}. Verified by: ${e.verified_by.join(" + ")}. `
-                           + `sha256 ${e.sha256.slice(0, 16)}…`, box);
-  const lines = e.content.replace(/\r\n/g, "\n").replace(/\n$/, "").split("\n");
+function place(card, previous) {  // a rebuilt card takes its earlier card's place, so the feed keeps its order
+  if (previous?.isConnected) previous.replaceWith(card);
+  return card;
+}
+
+function fileCard(path, file, box, open) {
+  const edits = file.edits;
+  const card = defenseCard(`Source patch before reverification: ${path}`, "EDIT Successfully applied", "risk-delete",
+                           `${edits.length} edit${edits.length === 1 ? "" : "s"}: ${edits.map((x) => x.meta).join(" · ")} `
+                           + `sha256 ${file.sha256.slice(0, 16)}…`, box);
+  const lines = file.content.replace(/\r\n/g, "\n").replace(/\n$/, "").split("\n");
   const toggle = el("button", "file-toggle", "");
   const body = el("div", open ? "file-body" : "file-body hidden");
-  const label = () => `${body.classList.contains("hidden") ? "▸ Show" : "▾ Hide"} the full file (${lines.length} lines) with the change in place`;
+  const label = () => `${body.classList.contains("hidden") ? "▸ Show" : "▾ Hide"} the full file (${lines.length} lines) `
+    + `with ${edits.length === 1 ? "the change" : `all ${edits.length} changes`} in place`;
   toggle.textContent = label();
   toggle.setAttribute("aria-expanded", String(open));
   add(card, toggle, body);
-  if (e.explanation) body.appendChild(el("div", "card-note", e.explanation));
+  for (const edit of edits) if (edit.explanation) body.appendChild(el("div", "card-note", edit.explanation));
   const viewer = el("div", "file-view");
-  const start = e.line - 1;  // the first replaced line, 0-based, in the file as written
   let firstChange = null;
   const row = (num, sign, text, cls) => {
     const line = add(el("div", `file-line ${cls}`), el("span", "file-num", num), el("span", "file-sign", sign),
@@ -196,13 +225,13 @@ function fileCard(e, box, open) {
     return line;
   };
   lines.forEach((text, i) => {
-    if (i === start) {
-      for (const removed of e.before_lines) {
+    for (const edit of edits.filter((x) => x.start === i)) {
+      for (const removed of edit.before) {
         const r = row("", "−", removed, "rm");
         firstChange = firstChange || r;
       }
     }
-    const added = i >= start && i < start + e.after_lines.length;
+    const added = edits.some((x) => i >= x.start && i < x.start + x.after.length);
     row(String(i + 1), added ? "+" : "", text, added ? "add" : "");
   });
   body.appendChild(viewer);

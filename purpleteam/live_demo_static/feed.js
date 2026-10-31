@@ -60,7 +60,8 @@ const KINDS = {
   "trigger-condition": "Targeted · crafted from each agent's own prompt",
   tap: "Adaptive search · TAP",
   pair: "Adaptive search · PAIR",
-  reverify: "Re-attack · the same payloads against the patched agent",
+  "code-reverify": "Reverification",
+  reverify: "Reverification",
 };
 
 // PyRIT names its jailbreak templates (DAN, AIM...), so each family gets its own section.
@@ -113,6 +114,9 @@ function attackGroup(e) {
 
 // Held, yet the agent tried the attacker's call and a control stopped it: fooled, not resisting.
 const persuaded = (e) => e.outcome === "held" && e.persuaded > 0;
+// A re-attack of a breaching payload: against the code patch alone, or the full defense.
+const reattack = (e) => e.technique === "reverify" || e.technique === "code-reverify";
+const heldByCode = (e) => e.held_by === "code patch";
 
 // Per-question agent execution tree: the discovered topology, coloured from this attack's captured calls.
 // Executed agents/tools are green; every tool the canary reached is red; everything else is "available" (grey).
@@ -136,8 +140,8 @@ function executionTree(e) {
     el("span", "xt-cap", "QUESTION-SPECIFIC CALL MAP"),
     add(el("span", "xt-keys"), xtLegend("exec", "Executed"), xtLegend("", "Available"), xtLegend("canary", "Canary evidence"))));
 
-  const tag = e.breached ? "CANARY HIT A WRITE ACTION" : persuaded(e) ? (e.technique === "reverify"
-    ? "STOPPED BY PATCH" : "AGENT PERSUADED") : "ROOT";
+  const tag = e.breached ? "CANARY HIT A WRITE ACTION" : persuaded(e) ? (reattack(e)
+    ? "STOPPED BY PATCH" : "AGENT PERSUADED") : heldByCode(e) ? "HELD BY THE CODE PATCH" : "ROOT";
   add(xt, add(el("div", `xt-root${e.breached ? " breach" : ""}`), el("span", "xt-q", "Q"),
     add(el("div", "xt-root-text"), el("div", "xt-root-title", `Attack question · ${attackKind(e.technique, e.id)}`),
         el("div", "xt-root-sub", "question enters the agent route")),
@@ -186,15 +190,16 @@ function executionTree(e) {
 }
 
 function fmtOutcome(e) {
-  if (e.outcome === "breached") return e.technique === "reverify" ? "STILL BREACHES" : "BREACHED";
-  if (persuaded(e)) return `HELD · ${e.technique === "reverify" ? "BY THE PATCH" : "AGENT PERSUADED"} `
+  if (e.outcome === "breached") return reattack(e) ? "STILL BREACHES" : "BREACHED";
+  if (heldByCode(e)) return `HELD · BY THE CODE PATCH ${e.conclusive}/${e.trials || e.conclusive}`;
+  if (persuaded(e)) return `HELD · ${reattack(e) ? "BY THE RUNTIME PATCH" : "AGENT PERSUADED"} `
     + `${e.persuaded}/${e.trials || e.conclusive}`;
   if (e.outcome === "held") return `held ${e.conclusive}/${e.trials || e.conclusive} · ≤${Math.round(e.upper_bound * 100)}%`;
   return "inconclusive";
 }
 
 function onAttackStart(e) {
-  const reverify = e.technique === "reverify";
+  const reverify = reattack(e);
   advance(reverify ? 3 : 1);
   $("attackSub").textContent = reverify ? "re-attacking the patched agent with the same payloads" : "attacks running · grouped by type";
   const group = attackGroup(e);
@@ -257,17 +262,18 @@ function onAttackResult(e) {
     add(body, el("div", "label", "Target API response:"), el("pre", "reply target-api-reply", targetReply));
   }
   if (e.breached) body.appendChild(el("div", "proof", `Breach proven — ${e.detail}`));
-  else if (persuaded(e) && e.technique === "reverify") {  // the patched agent was fooled again; the patch held
-    body.appendChild(el("div", "proof patched", `Held by the defender's patch — ${e.detail}`));
+  else if (heldByCode(e)) body.appendChild(el("div", "proof patched", `Held by the code patch — ${e.detail}`));
+  else if (persuaded(e) && reattack(e)) {  // the patched agent was fooled again; the runtime patch held
+    body.appendChild(el("div", "proof patched", `Held by the runtime patch — ${e.detail}`));
   } else if (persuaded(e)) body.appendChild(el("div", "proof attempt", `Attempt detected — ${e.detail}`));
-  else if (e.technique === "reverify") body.appendChild(el("div", "label", e.detail));
+  else if (reattack(e)) body.appendChild(el("div", "label", e.detail));
   else if (e.outcome === "inconclusive" && e.detail) {
     body.appendChild(el("div", "proof why", `Not tested — ${e.detail.replace(/^not tested:\s*/i, "")}`));
   }
   group.running = Math.max(0, group.running - 1);
   if (e.breached) group.breached += 1; else if (e.outcome === "held") group.held += 1;
   if (persuaded(e)) group.persuaded += 1;
-  if (e.technique === "reverify") group.patched = true;
+  if (reattack(e)) group.patched = true;
   showGroup(group);
   if (!replaying && !group.running && !group.pinned) {  // finished: fold it a moment later, unless it starts again
     setTimeout(() => { if (!group.running && !group.pinned) setOpen(group, false); }, 1500);

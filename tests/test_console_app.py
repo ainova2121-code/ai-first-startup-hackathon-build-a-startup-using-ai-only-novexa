@@ -129,6 +129,57 @@ def test_a_quote_in_a_target_name_cannot_break_out_of_the_remove_buttons_inline_
     assert "fetch(&#39;/users&#39;" in body or "fetch('/users'" not in body  # never raw, executable JS
 
 
+def test_a_gateway_is_registered_only_over_https_except_on_this_machines_loopback(tmp_path):
+    app = _app(tmp_path)
+    web = _signed_in(app)
+
+    response = web.post("/targets", data={"name": "x", "base_url": "http://gw.example", "admin_key": "k"})
+    assert response.status_code == 400 and "https" in response.text
+    assert web.post("/targets", data={"name": "y", "base_url": "http://127.0.0.1:8080", "admin_key": "k"},
+                    follow_redirects=False).status_code == 303
+    assert [row["base_url"] for row in TargetRepository(connect(tmp_path / "console.db")).list_all()] == \
+        ["http://127.0.0.1:8080"]
+
+
+def test_a_pasted_trust_bundle_is_pinned_and_a_malformed_one_is_refused(tmp_path):
+    import json
+
+    from purpleteam.audit.ledger import AuditLedger
+    app = _app(tmp_path)
+    web = _signed_in(app)
+    ledger = AuditLedger(tmp_path / "audit.jsonl")
+    ledger.append("audit", "event", {})  # a key exists only once an actor has signed
+
+    assert web.post("/targets", data={"name": "x", "base_url": "https://gw.example", "admin_key": "k",
+                                      "trust": "not json"}).status_code == 400
+    assert web.post("/targets", data={"name": "x", "base_url": "https://gw.example", "admin_key": "k",
+                                      "trust": json.dumps({"keys": {"audit": {"0" * 16: "ab"}}})}).status_code == 400
+    response = web.post("/targets", data={"name": "x", "base_url": "https://gw.example", "admin_key": "k",
+                                          "trust": json.dumps(ledger.public_trust())}, follow_redirects=False)
+    assert response.status_code == 303
+    assert TargetRepository(connect(tmp_path / "console.db")).list_all()[0]["trust_source"] == "operator"
+
+
+def test_the_detail_view_shows_no_evidence_that_fails_verification(tmp_path):
+    from purpleteam.audit.ledger import AuditLedger
+    ledger = AuditLedger(tmp_path / "audit.jsonl")
+    ledger.append("attacker", "attack", {"id": "t1"})
+
+    def handler(request):
+        if request.url.path == "/ledger/trust":
+            return httpx.Response(200, json=ledger.public_trust())
+        forged = [{**e, "payload": {"id": "forged"}} for e in ledger.events()]
+        return httpx.Response(200, json={"log_id": ledger.log_id, "size": 1, "events": forged, "next_seq": None})
+
+    db_path = tmp_path / "console.db"
+    app = _app(tmp_path, httpx.AsyncClient(transport=httpx.MockTransport(handler)))
+    web = _signed_in(app)
+    target_id = _register_target(db_path, web)
+
+    body = web.get(f"/targets/{target_id}").text
+    assert "evidence failed verification at event 0: content altered" in body
+
+
 def _register_target(db_path, web: TestClient) -> str:
     response = web.post("/targets", data={"name": "demo", "base_url": "https://gw.example", "admin_key": "k"},
                         follow_redirects=False)

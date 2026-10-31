@@ -287,4 +287,11 @@ def create_gateway(observer: GatewayObserver, *, keys: GatewayKeys, openai: Prov
             return {"log_id": ledger.log_id, "size": ledger.count(), "events": page,
                     "next_seq": page[-1]["seq"] if len(page) == limit else None}
 
+        @app.get("/ledger/trust")
+        async def ledger_trust(request: Request) -> dict:
+            """The public keys this gateway signs its events with, for a fleet console to pin once and verify
+            every exported event against (``purpleteam.audit.stream``). Public material only."""
+            authorize(request, ADMIN)
+            return {"log_id": ledger.log_id, **ledger.public_trust()}
+
     return app

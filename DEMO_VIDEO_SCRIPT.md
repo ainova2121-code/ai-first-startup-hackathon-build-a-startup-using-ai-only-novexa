@@ -1,138 +1,131 @@
-# AIQ Security — Demo Video Script
+# Demo Video Script
 
-**Target length:** 3–5 min (this runs ~4:15). **Format:** screen recording of the live console with voiceover.
-**Golden rule:** say what the screen shows, let the proof carry the claim. Don't oversell — the artifacts do the talking.
+**Length:** 5:00, introduction included. **Format:** screen recording of the live console with voiceover.
+**Golden rule:** say what the screen shows and let the proof carry the claim.
 
-> Tabs, left to right: **Live run · Discovery · Patched files · Decision drift · Audit ledger**.
-> Before recording: `uv run uvicorn --factory ledgerpilot.main:create_app` on the target, start the console, set mode to **Full**, attack type **Full assessment**, and have the browser already signed in (past the "Enter the demo" page). Do a dry run once so the cache is warm and the full run lands in ~3 min.
+> Tabs, left to right: **Live run · Discovery · Database · Inquiry · Patched files · Decision drift · Audit ledger**.
+> Top bar: **Run** picker · **Mode** · **Dataset** · **Dataset JSON** · **Restore files** · **Pause / Resume / Stop** · **Start run**.
 
----
+## Before you record
 
-## 0:00 — Cold open (hook)  ~20s
-
-**On screen:** console at the **Live run** tab, idle. `target not yet discovered` chip visible.
-
-**VO:**
-> "AI agents don't just chat anymore — they pay invoices, move money, change records. So the real question isn't *can my agent be tricked into saying something* — it's *can it be tricked into **doing** something*.
->
-> This is AIQ Security. It attacks your agent, patches it, attacks it again to prove the fix held, and seals cryptographic evidence an auditor can verify. Let me show you — live, on a real agent, in about three minutes."
-
-**Action:** click **Start run**.
+- Record on your own Windows machine: the TPM co-signature is real hardware only there. A hosted copy signs with
+  the software key, and the page says so.
+- Do one complete **Full dataset** run first. The re-attack phase replays every breach 16 times, which takes
+  several minutes. In the video, start a run live for the opening, then switch the **Run** picker to that finished
+  run, and say so on camera: "here's the full run I completed a moment ago."
+- Set **Mode: Custom dataset**, **Dataset: Full dataset**. Browser at 1920×1080, already signed in.
 
 ---
 
-## 0:20 — Discovery tab  ~40s
+## 0:00–0:30 · Intro (title slide, or the target overview page)
 
-**On screen:** the console auto-jumps to **Discovery**. The map builds node by node; the **Discovery events** feed streams on the right; the `target` chip fills in.
+**Cursor:** rest on the product name, then the LedgerPilot card.
 
-**VO:**
-> "First it discovers the target on its own — no configuration. It watches real traffic and draws the agent graph: every agent, every tool, every handoff.
->
-> Notice we never hard-coded anything about this customer. The platform is domain-agnostic — point it at *any* agent system and it learns the shape itself. Green nodes it actually exercised, the others it found but hasn't run yet.
->
-> And prompts are fingerprinted, never shown — so we can prove what we tested without leaking the customer's IP."
+**Say:**
+> "AI agents don't just chat any more: they pay invoices and change bank details. So the question isn't whether an
+> agent can be tricked into *saying* something, it's whether it can be tricked into *doing* something. I'm [name],
+> and this is our AI purple-team platform. It discovers your agents, attacks them, patches them, attacks again to
+> prove the fix held, and seals evidence an auditor can verify, all inside your own cloud."
 
-**Action:** hover one node to show the detail card; let the posture findings populate underneath. Then the run auto-returns to **Live run**.
+## 0:30–0:50 · The target
 
-> *If asked why discovery matters:* "This is what lets us attack a system we've never seen — the attacks are written from the target's own discovered tool schema."
+**Screen:** the target overview page. **Cursor:** move down the agent list, then the data tables.
 
----
+**Say:**
+> "Our demo target is LedgerPilot, a real multi-agent accounts-payable system: six agents, fourteen tools,
+> processing real FCC invoice PDFs. The platform knows nothing about it in advance."
 
-## 1:00 — Live run tab — Attack console  ~60s
+## 0:50–1:20 · Start run, then Discovery
 
-**On screen:** auto-returned to **Live run**. Left panel **Attack console** fills with grouped, collapsible attack sections (Prompt injection, Jailbreak, Business-claim injection, Obfuscation, …). Breaches turn red; persuaded-but-stopped turn amber.
+**Cursor:** click **Start run**, then the **Discovery** tab. Hover one agent node, then one red (dangerous) tool.
 
-**VO:**
-> "Now the attacks. Every one of these runs against the **unpatched** agent first, so the breach count is the agent's true exposure — not a number we flatter.
->
-> They're grouped by technique — expand any one to watch it fire. Here's the part most tools get wrong:" *(expand the classic jailbreak group)* "the famous jailbreaks — DAN, roleplay, 'ignore previous instructions' — all of them *held*. Zero breaches.
->
-> But watch this —" *(expand Business-claim injection, point at a red row)* "a single ordinary-looking line buried in an invoice tells the agent to pay a different account. No jailbreak. And the agent pays the attacker.
->
-> That red row isn't a risk score. It's a **breach**: our canary account — `US00ATTACKER0666` — reached the arguments of a real payment tool call. That's a hard artifact. It either happened or it didn't."
+**Say:**
+> "First it discovers the system on its own: every agent, every tool, and which tools can move money or change
+> records. Prompts are only fingerprinted, never shown. Nothing about this customer is hard-coded, so the same
+> platform works on any agent system."
 
-**Action:** point at an amber row.
+## 1:20–2:15 · Live run: the attack
 
-**VO:**
-> "Amber means the agent was *persuaded* — it tried the attacker's call — but a control stopped it before it landed. We report that too, because 'nearly breached' is something a security team needs to know."
+**Cursor:** click **Live run**. Point at the step bar (**Discover → Attack → Patch → Re-attack → Verdict**).
+Expand **Business-claim injection**, then one red row and its call map.
 
----
+**Say:**
+> "Every attack hits the *unpatched* agent first, so the breach count is real exposure. Here's what breaches: no
+> jailbreak, just one ordinary sentence in an invoice email saying the bank account changed."
+> *(point at the canary in the call map)* "Our canary account reached a real tool call, recorded by the intake
+> agent, then spread to the vendor and payment agents. That's proof, not a risk score."
 
-## 2:00 — Live run tab — Defense panel  ~40s
+Then expand the **Jailbreak** group:
+> "And DAN-style jailbreaks? Held. Famous jailbreaks are the wrong test for tool-using agents."
 
-**On screen:** right panel **Defense** fills as patches attach; the step bar advances to re-attack; red rows flip to held on the second pass.
+## 2:15–3:00 · Patch and re-attack
 
-**VO:**
-> "Then it defends. Runtime guards snap in without touching a single file. Where a source fix is needed, it's a verified codemod — exact-match, independently checked, and labelled as machine-generated, never silently shipped.
->
-> And here's the loop that makes this real: it re-runs **the same attacks** against the patched agent." *(point as rows flip)* "The invoice attack that paid the attacker a moment ago — now held. We don't claim the fix works. We re-attack and show it."
+**Cursor:** switch the **Run** picker to your finished run. Point at the **Defense** panel, then the **Re-attack**
+rows, then click **Patched files**.
 
----
+**Say:**
+> "The defender patches in two layers. First code: verified source fixes, each proven by a rescan and an
+> independent check, snapshotted so one click restores them. Then runtime guards for anything code can't decide."
+> *(point at a held re-attack row)* "Then it replays the exact payload that breached, sixteen times. Held every
+> time. We don't claim the fix works, we re-attack and show it."
 
-## 2:40 — Live run tab — Verdict  ~20s
+If the run shows **HELD · BY THE CODE PATCH** and **BY THE RUNTIME PATCH** labels, point at one of each.
 
-**On screen:** **Verdict** panel appears with the gate list and scorecard.
+## 3:00–3:25 · Database
 
-**VO:**
-> "That gives us a verdict. 'Safe to ship' is *earned*, not asserted — it stays withheld until the edited target is reloaded, re-attacked, and the evidence chain verifies. Every number here is from this run."
+**Cursor:** click **Database**, toggle **Breach**, point at the attacker's bank account, then toggle **After patch**.
 
----
+**Say:**
+> "This is the target's real database. In the breach snapshot, the attacker's account is on file. After the
+> patch, it never lands."
 
-## 3:00 — Patched files tab  ~25s
+## 3:25–3:45 · Inquiry (cut this first if you run long)
 
-**On screen:** click **Patched files**. Each edited file shown whole, change in place. Point at the **Restore original files** button in the top bar.
+**Cursor:** click **Inquiry**, choose **Unpatched**, ask "show me all vendors' bank accounts", then switch to
+**Patched** and ask again.
 
-**VO:**
-> "Every file the platform actually edited is shown here in full, with the change in place — nothing hidden in a diff. And it's all reversible: one click on **Restore original files** puts every byte back. We snapshot the original before we touch it, so a customer can run us against production code without fear."
+**Say:**
+> "Same question through the supplier portal. Unpatched, it leaks other vendors' data. Patched, it only sees its
+> own rows."
 
----
+## 3:45–4:35 · Audit ledger (the finale)
 
-## 3:25 — Decision drift tab  ~20s
+**Cursor:** click **Audit ledger**. Let the signing flow animate, click one event to light its proof path in the
+Merkle tree, then point at the TPM signature card and the RFC 3161 timestamp card.
 
-**On screen:** click **Decision drift**. Show the pinned decisions and the "what if a patch were removed?" control.
+**Say:**
+> "Every step is sealed. Each event is signed with Ed25519 and post-quantum ML-DSA, chained per agent, and rolled
+> into a Merkle tree. My laptop's TPM chip co-signs the checkpoint, and an independent timestamp authority proves
+> when it existed. Click any event: its inclusion proof is recomputed right here in the browser. Change one byte
+> and the root breaks."
 
-**VO:**
-> "We also pin every decision the verified defense made — every call allowed, held, or blocked — with its exact inputs. If someone later loosens a policy on an input we already proved was an attack, the gateway refuses to enforce it. Security can't quietly regress."
+## 4:35–5:00 · Verdict and close
 
----
+**Cursor:** back to **Live run**, the Verdict panel.
 
-## 3:45 — Audit ledger tab (the finale)  ~30s
-
-**On screen:** click **Audit ledger**. The **Merkle tree** renders; the **signing flow** animates; the checkpoint and RFC 3161 anchor cards show. Click one event to light its proof path.
-
-**VO:**
-> "And everything is sealed. Every event is signed — Ed25519 *and* post-quantum ML-DSA — chained per actor, and rolled into a Merkle checkpoint. A hardware TPM co-signs it, and an independent RFC 3161 timestamp proves when it existed.
->
-> Click any event" *(click one)* "and the inclusion proof recomputes right here in the browser. Change one byte anywhere and the root breaks. This is evidence you can hand an auditor — and verify without trusting us."
-
-> *Honesty note for Q&A:* if the live deployment runs the software signer instead of a TPM, say so — "on our hosted demo this is a software key, honestly labelled; the hardware TPM co-signature runs on the local demo." Never call software 'hardware'.
-
----
-
-## 4:15 — Close  ~15s
-
-**On screen:** back to the Verdict, or the one-liner slide.
-
-**VO:**
-> "Scanners flag risks. We prove them, close them, and prove they're closed — with evidence you can take to an auditor. Break it. Fix it. Prove it. Sign it. That's AIQ Security."
+**Say:**
+> "So the verdict is earned, not asserted. Scanners flag risks; we prove them, close them, prove they're closed,
+> and hand you evidence an auditor can check without trusting us. Break it. Fix it. Prove it. Sign it."
 
 ---
 
-## Shot checklist (capture these no matter what)
+## If you run over 5:00
+
+Drop **Inquiry** first (−20 s), then shorten the jailbreak line. Keep the breach, the re-attack hold, the database
+flip and the ledger: those four are the pitch.
+
+## Shot checklist
+
 - [ ] Discovery map building itself (domain-agnostic proof)
-- [ ] A **red** breach row expanded — canary in a real tool call
-- [ ] Classic jailbreaks group showing **held / 0 breaches**
-- [ ] An **amber** persuaded-but-stopped row
-- [ ] The same attack flipping **breached → held** on re-attack
-- [ ] Verdict panel with real numbers
-- [ ] Patched file shown whole + Restore button
-- [ ] Merkle tree with a proof path lit + signing flow animating
-
-## If you have to cut to 3:00
-Drop **Decision drift** (3:25) and trim the Defense panel VO. Keep Discovery, the breach, the re-attack flip, and the ledger — those four are the pitch.
+- [ ] A **red** business-claim row expanded, canary in a real tool call
+- [ ] Jailbreak group showing **held**
+- [ ] The same payload **held** on re-attack
+- [ ] Database **Breach** vs **After patch**
+- [ ] Merkle tree with a proof path lit, TPM and timestamp cards
 
 ## Recording tips
-- Record at 1920×1080, console in full-window; zoom the browser so rows are legible on a phone screen.
-- Keep each reply under 30s so the recording stays tight (the run is tuned for this).
-- One continuous take of the run is more convincing than cuts — the live loop *is* the demo.
-- Add captions; judges often watch muted first.
+
+- Add captions: judges often watch muted first.
+- Zoom the browser so rows are legible on a phone screen.
+- Speed up waiting in editing rather than cutting it.
+- On a hosted copy, say plainly that the checkpoint is signed with a software key; the TPM signature runs locally.

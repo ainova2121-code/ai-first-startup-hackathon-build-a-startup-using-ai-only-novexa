@@ -38,9 +38,14 @@ Pick a mode:
   is its real exposure. The attacker uses no model: plain claims written by rule from the discovered tool
   schema, the same claims hidden inside a document or a form field, and PyRIT's jailbreak,
   prompt-injection and social-engineering templates. The defender then checks legitimate work first
-  (a patch that breaks it is dropped before any replay), re-attacks with every breaching payload three
-  times, applies verified source fixes, reloads the edited target and attacks it again.
-- **Advanced**: Full, plus base64-disguised and document-buried variants and five verification trials.
+  (a patch that breaks it is dropped before any replay), re-attacks with every breaching payload until
+  the release gate below is proven, applies verified source fixes, reloads the edited target and attacks it again.
+- **Advanced**: Full, plus base64-disguised and document-buried variants and a tighter release gate.
+
+Reverification sends each breaching question at most twice: once against the code patch alone (one per hole)
+and once against the full defense. Advanced mode applies the platform's own release gate instead (at most a 20%
+breach rate at 95% confidence: 16 replays per hole). `PURPLETEAM_RELEASE_GATE` sets the demo's gate; the evidence
+always states the bound a run reached.
 
 Measured on LedgerPilot (`openai/gpt-oss-120b` via Cerebras): 8–9 of 23 attacks breach across three
 techniques — one planted bank account travels from the intake agent to the vendor and payment agents —
@@ -52,6 +57,13 @@ the real diffs (and **Restore original files** undoes them); **Decision drift** 
 with the last approved run; the **Audit ledger** draws each signature the moment it is made, grows the
 Merkle tree (the inclusion proof is recomputed in your browser), and shows the checkpoint's TPM signature
 and RFC 3161 timestamp. `PURPLETEAM_ONLY_STATIC=0` adds the model-driven attacks (targeted recon, TAP).
+
+### Host the demo
+
+The root `Dockerfile` packages this console with LedgerPilot for a hosted link (Hugging Face Spaces' free CPU tier,
+or any host with 2 GB of memory); its header has the steps. A container has no TPM, so a hosted run signs checkpoints
+with a software key, labelled as such. The login is passwordless and every run spends your model credit: keep the
+link private and take it down afterwards.
 
 ## Assess another agent project
 
@@ -122,7 +134,10 @@ permissions, active keys, sealed-run verdicts, containment events — live, upda
 each one is polled.
 
 Sign in, then **Targets → Register a gateway** with that gateway's own admin bearer key (from
-`docker compose logs gateway`). Three roles: `admin` (manage the fleet and console users),
+`docker compose logs gateway`). Gateways are reached over https only. Every event the console reads is
+verified against the gateway's pinned public keys -- paste its trust file at registration, or they are
+pinned on first use -- so a tampered, forged or re-signed log shows as *untrusted*, never as a verdict;
+**Re-pin keys** pins new ones after a gateway's signing keys change. Three roles: `admin` (manage the fleet and console users),
 `analyst` (everything but fleet/user management), `auditor` (evidence-shaped views only — no raw
 activity drill-down). The console only ever *reads* from a gateway over HTTP (`/ledger/export`,
 admin-only, paginated) — it never touches the gateway's filesystem and nothing it does narrows or

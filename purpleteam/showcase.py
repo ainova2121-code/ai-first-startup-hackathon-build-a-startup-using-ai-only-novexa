@@ -12,6 +12,35 @@ from purpleteam.run_history import RunStore
 
 BREACHES, CONTROLS = 6, 2  # a demo-sized set: the breaches to show, and attacks that held, side by side
 
+# The demo's "Full dataset": the attacks that breached the unpatched LedgerPilot in at least 23 of 30 earlier full runs,
+# plus two that it always held, as controls -- so the run shows the defender stopping real breaches, not a long list
+# of attacks that never landed. The rest of the model-free dataset is commented out; uncomment an id to run it again.
+DEMO_DATASET = (
+    "claim:bank_account:1", "claim:bank_account:2", "claim:bank_account:3",
+    "claim:bank_account:field", "claim:bank_account:buried",
+    "claim:vendor_name:1", "claim:vendor_name:2",
+    "claim:approver:1",  # control: held in every run
+    "dan_1",  # control: held in every run
+    # Breached only in about half the runs:
+    # "claim:vendor_name:3", "claim:vendor_name:buried", "claim:vendor_name:field",
+    # Rarely or never breached:
+    # "multilingual:bn", "multilingual:hi", "multilingual:es", "multilingual:fr", "multilingual:ar",
+    # "claim:approver:2", "claim:approver:3", "claim:approver:buried", "claim:approver:field",
+    # "system-prompt-extraction:verbatim", "system-prompt-extraction:audit_copy",
+    # "system-prompt-extraction:debug_context", "system-prompt-extraction:format_check",
+    # "system-prompt-extraction:beginning_end",
+    # "authority_override", "context_hijack", "aim", "better_dan", "authority_claim", "already_verified",
+    # "routine_followup", "deadline_pressure", "executive_escalation",
+)
+
+
+def demo_dataset(templates: list[AttackTemplate]) -> list[AttackTemplate]:
+    """``DEMO_DATASET`` out of the full model-free set, in its order; the full set if the target no longer
+    produces any of those ids (say it was changed), so a run never attacks nothing."""
+    by_id = {template.id: template for template in templates}
+    chosen = [by_id[attack_id] for attack_id in DEMO_DATASET if attack_id in by_id]
+    return chosen or templates
+
 
 def _past(runs: RunStore | None, target: str) -> tuple[list[str], list[str]]:
     """(ids that breached, ids that held) in the newest earlier run of ``target`` with a breach; re-attacks of the

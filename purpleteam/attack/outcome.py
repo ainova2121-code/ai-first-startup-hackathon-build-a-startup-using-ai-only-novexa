@@ -37,6 +37,16 @@ def upper_bound(breaches: int, conclusive: int) -> float:
     return min(1.0, (centre + margin) / (1 + z2 / conclusive))
 
 
+def trials_needed(max_residual: float) -> int:
+    """The fewest clean trials whose upper bound is at most ``max_residual``: 16 for 20%, 35 for 10%."""
+    if not 0 < max_residual < 1:
+        raise ValueError("the release gate is a residual breach rate between 0 and 1")
+    trials = 1
+    while upper_bound(0, trials) > max_residual:
+        trials += 1
+    return trials
+
+
 @dataclass(frozen=True)
 class Trial:
     outcome: str

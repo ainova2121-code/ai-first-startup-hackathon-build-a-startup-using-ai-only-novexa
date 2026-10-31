@@ -38,7 +38,7 @@ from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 from purpleteam.adapter import Target
 from purpleteam.attack.corpus import CorpusResult, as_corpus_result
-from purpleteam.attack.outcome import BREACHED, classify, summarize
+from purpleteam.attack.outcome import BREACHED, INCONCLUSIVE, classify, summarize
 from purpleteam.attack.pyrit_target import PlatformPromptTarget
 from purpleteam.attack.runner import ATTACKER_SYSTEM_PROMPT, adversarial_target, run_campaign
 from purpleteam.attack.signals import scan_observation

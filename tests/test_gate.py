@@ -99,3 +99,27 @@ def test_the_invariant_rejects_the_action_and_a_hold_that_still_acts():
     assert action_is_gated(f"return {GATE_TAG!r} + send(to)") is not None
     assert action_is_gated("return 'Bank account updated.'") is not None
     assert action_is_gated(f"return {gate_message('pay')!r}") is None
+
+
+def test_a_stale_catalog_gate_is_derived_again_instead_of_blocking_the_fix(tmp_path):
+    """A catalog entry from an older transform no longer verifies: it is replaced, not left to skip the gate forever."""
+    import asyncio
+
+    from purpleteam.audit.ledger import AuditLedger
+    from purpleteam.codemods.base import VerifiedCodemod
+    from purpleteam.codemods.catalog import CodemodCatalog, pattern_key
+    from purpleteam.codemods.restore import SourceSnapshots
+    from purpleteam.source_fix import fix_sources
+
+    repo, scanner = _target(tmp_path)
+    (finding,) = scanner.scan(repo)
+    original = source_statement(repo / "vendor.py", finding.line)
+    catalog = CodemodCatalog(tmp_path / "catalog")
+    stale = VerifiedCodemod(GATE_KIND, original, '        return "Held for approval."', "old", ("rescan",))
+    catalog.approve(pattern_key(GATE_KIND, original), stale, approval="auto-approved")
+
+    result = asyncio.run(fix_sources([finding], repo, scanner, catalog, complete=None,
+                                     snapshots=SourceSnapshots(tmp_path / "snap.json"),
+                                     ledger=AuditLedger(tmp_path / "audit.jsonl")))
+    (change,) = result.changes
+    assert GATE_TAG in (repo / "vendor.py").read_text(encoding="utf-8") and "invariant" in change["verified_by"]

@@ -169,6 +169,36 @@ def _protection(checkpoint: dict, keys: dict, revoked: dict, require_pq: bool, h
     return entry["kind"] if signed else None
 
 
+def event_problem(event: object, seq: int, log: str | None, heads: dict[str, str], keys: dict, revoked: dict,
+                  require_pq: bool, root_before) -> str | None:
+    """Why ``event`` cannot be event ``seq`` of log ``log`` (any log when None) after each actor's ``heads``, or
+    None. ``root_before()`` is the Merkle root of every earlier event, asked for only when a seal must match it."""
+    if not _valid_event(event):
+        return "malformed event"
+    if event["seq"] != seq:
+        return "sequence gap or reorder"
+    if log is not None and event["log"] != log:
+        return "event belongs to a different log"
+    if event["prev"] != heads.get(event["actor"], GENESIS):
+        return "chain link broken"
+    if event_hash(event["prev"], {k: event[k] for k in CORE_FIELDS}) != event["hash"]:
+        return "content altered"
+    if event["kid"] in revoked and seq >= revoked[event["kid"]]:
+        return "signing key revoked"
+    if not _signed_by(keys, revoked, event["actor"], event["kid"], seq, event["hash"].encode(), event,
+                      EVENT_CONTEXT, require_pq):
+        return "invalid signature or unknown key"
+    if event["kind"] == "seal" and event["payload"].get("merkle_root") != root_before():
+        return "seal does not match the log before it"
+    return None
+
+
+def pinned_keys(trust: dict) -> tuple[dict, dict]:
+    """(keys, revoked) from a trust bundle, checked the same way ``verify_log`` checks it; ValueError if malformed."""
+    keys, revoked, _ = _trust(trust)
+    return keys, revoked
+
+
 def verify_log(events: list[dict], trust: dict, *, min_checkpoint_size: int = 0,
                max_checkpoint_age: float | None = None, now: float | None = None,
                max_clock_skew: float = 60.0, require_pq: bool = False, require_hardware: bool = False) -> VerifyResult:
@@ -189,28 +219,12 @@ def _verify_log(events: list[dict], trust: dict, min_size: int, max_age: float |
     hashes: list[str] = []
     latest = -math.inf
     for index, event in enumerate(events):
-        def fail(reason: str, at: int = index) -> VerifyResult:
-            return VerifyResult(False, len(events), at, reason)
-
-        if not _valid_event(event):
-            return fail("malformed event")
-        if event["seq"] != index:
-            return fail("sequence gap or reorder")
-        if event["log"] != events[0]["log"]:
-            return fail("event belongs to a different log")
-        if event["prev"] != heads.get(event["actor"], GENESIS):
-            return fail("chain link broken")
-        if event_hash(event["prev"], {k: event[k] for k in CORE_FIELDS}) != event["hash"]:
-            return fail("content altered")
-        if event["kid"] in revoked and index >= revoked[event["kid"]]:
-            return fail("signing key revoked")
-        if not _signed_by(keys, revoked, event["actor"], event["kid"], index, event["hash"].encode(), event,
-                          EVENT_CONTEXT, require_pq):
-            return fail("invalid signature or unknown key")
-        if event["kind"] == "seal" and event["payload"].get("merkle_root") != merkle_root(hashes):
-            return fail("seal does not match the log before it")
-        if event["ts"] < latest - skew:
-            return fail("timestamp goes backwards")
+        log = None if index == 0 else events[0]["log"]
+        problem = event_problem(event, index, log, heads, keys, revoked, require_pq, lambda: merkle_root(hashes))
+        if problem is None and event["ts"] < latest - skew:
+            problem = "timestamp goes backwards"
+        if problem is not None:
+            return VerifyResult(False, len(events), index, problem)
         latest = max(latest, event["ts"])
         heads[event["actor"]] = event["hash"]
         hashes.append(event["hash"])

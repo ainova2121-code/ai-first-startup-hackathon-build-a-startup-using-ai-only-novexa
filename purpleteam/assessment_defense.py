@@ -9,36 +9,19 @@ from collections import Counter
 from dataclasses import asdict
 from typing import Callable
 
+from purpleteam.assessment_code import CODE_PATCH, RUNTIME_GUARD, ControlledTarget
 from purpleteam.assessment_report import AssessmentReport, patch_scopes
 from purpleteam.attack.corpus import CorpusResult
 from purpleteam.concurrency import parallel_map
 from purpleteam.decisions import ATTACK, LEGIT, DecisionRecorder, ProbeLog, compare, decide, summarize, take_baseline
 from purpleteam.defender.policy import policy_data
 from purpleteam.defender.selector import ESCALATIONS, Defender, Finding, findings_from_breaches
-from purpleteam.explainer import Explanation
 from purpleteam.patches.base import CompositeGuard
 from purpleteam.patches.catalog import missing_patches
 from purpleteam.sast import StaticFinding
-from purpleteam.source_fix import SourceFixResult, display
-from purpleteam.run_control import RunControl, RunStopped
+from purpleteam.source_fix import SourceFixResult
+from purpleteam.run_control import RunControl
 from purpleteam.verifier import Replay, verify
-
-
-class _ControlledTarget:
-    """Cooperative gate around verifier probes so pause/stop also applies during re-attacks."""
-
-    def __init__(self, target, control: RunControl) -> None:
-        self._target, self._control = target, control
-
-    def reset(self) -> None:
-        if not self._control.checkpoint():
-            raise RunStopped("run stopped before verifier reset")
-        self._target.reset()
-
-    def send(self, text: str):
-        if not self._control.checkpoint():
-            raise RunStopped("run stopped before verifier request")
-        return self._target.send(text)
 
 
 class DefensePass:
@@ -59,6 +42,12 @@ class DefensePass:
         # the same breach recurring, not a different hole.
         scope_by_payload = {b.payload: frozenset((b.kind, tool, agent) for agent, tool in b.breached_tools)
                             or (b.kind, b.tool, b.agent) for b in reversed(breaches) if b.payload}
+        # The hole each payload opened is where its breach first landed: payloads that opened the same hole share
+        # the release gate's replays rather than each repeating them all (verifier.verify ``holes``).
+        hole_by_payload = {b.payload: (b.kind, b.tool, b.agent) for b in reversed(breaches) if b.payload}
+
+        report.guarded = report.findings  # every finding gets its runtime guard; the replay says which layer held
+        held_by: dict[str, str] = {}  # payload -> the layer that held it on the final replay
 
         def attempt(level: int, excluded: frozenset[str], legit_only: bool = False) -> tuple[dict, ProbeLog, set[str]]:
             gaps = self._apply_defense(report, level, source_fix, source_gaps, emit, advisories, excluded,
@@ -68,7 +57,9 @@ class DefensePass:
             # be counted as source verification because the original bytes are no longer importable.
             attacks = [] if legit_only else [(origins.get(p, ""), p) for p in payloads]
             scopes = None if legit_only else [scope_by_payload.get(p) for p in payloads]
-            probes = self._replay(report, attacks, emit, scopes=scopes, control=control)
+            holes = None if legit_only else [hole_by_payload.get(p) for p in payloads]
+            probes = self._replay(report, attacks, emit, scopes=scopes, holes=holes, control=control,
+                                  code_patched=bool(source_fix.changes), held_by=held_by)
             return gaps, probes, self._legit_impact(report, probes, level, excluded, emit)
 
         def narrow(excluded: frozenset[str], where: str) -> None:
@@ -81,33 +72,42 @@ class DefensePass:
         # and the narrower defense is kept only if the attack is still proven blocked without it. Legitimate
         # work is checked alone first, so a patch that breaks it is dropped before the attacks are replayed
         # rather than after: one replay pass instead of two.
-        level, excluded, narrowed = 0, frozenset(), False
-        if payloads and self._legit:
-            culprits = attempt(level, excluded, legit_only=True)[2]
-            if control is not None and control.stop_requested:
-                return
-            if culprits:
-                narrowed, excluded = True, frozenset(culprits)
-                narrow(excluded, "a legit check, before any replay")
-        while True:
-            gaps, probes, culprits = attempt(level, excluded)
-            if control is not None and control.stop_requested:
-                return
-            if excluded and not report.verification.attack_blocked:  # the narrower defense let an attack through:
-                excluded = frozenset()  # keep the one that holds, broken legit and all
-                continue
-            if report.verification.attack_blocked and culprits and not narrowed:
-                narrowed, trial = True, excluded | culprits
-                narrow(trial, "a verified replay")
-                gaps, probes, culprits = attempt(level, trial)
-                if report.verification.attack_blocked:
-                    excluded = trial
-                else:  # the narrower defense let the attack through: keep the one that holds, broken legit and all
-                    gaps, probes, culprits = attempt(level, excluded)
-                break
-            if report.verification.attack_blocked or not payloads or level == len(ESCALATIONS) - 1:
-                break
-            level += 1
+        def defend() -> tuple[dict, ProbeLog, int, frozenset[str]] | None:
+            """Build, verify, narrow and escalate the runtime guard for ``report.guarded``; None once stopped."""
+            level, excluded, narrowed = 0, frozenset(), False
+            if payloads and self._legit:
+                culprits = attempt(level, excluded, legit_only=True)[2]
+                if control is not None and control.stop_requested:
+                    return None
+                if culprits:
+                    narrowed, excluded = True, frozenset(culprits)
+                    narrow(excluded, "a legit check, before any replay")
+            while True:
+                gaps, probes, culprits = attempt(level, excluded)
+                if control is not None and control.stop_requested:
+                    return None
+                if excluded and not report.verification.attack_blocked:  # the narrower defense let an attack through:
+                    excluded = frozenset()  # keep the one that holds, broken legit and all
+                    continue
+                if report.verification.attack_blocked and culprits and not narrowed:
+                    narrowed, trial = True, excluded | culprits
+                    narrow(trial, "a verified replay")
+                    gaps, probes, culprits = attempt(level, trial)
+                    if report.verification.attack_blocked:
+                        excluded = trial
+                    else:  # the narrower defense let the attack through: keep the one that holds, broken legit and all
+                        gaps, probes, culprits = attempt(level, excluded)
+                    break
+                if report.verification.attack_blocked or not payloads or level == len(ESCALATIONS) - 1:
+                    break
+                level += 1
+            return gaps, probes, level, excluded
+
+        outcome = defend()
+        if outcome is None:
+            return
+        gaps, probes, level, excluded = outcome
+        report.code_held = sorted(origins.get(p, "") for p, by in held_by.items() if by == CODE_PATCH)
         report.escalation, report.excluded = level, excluded
         if record_decisions and not (control and control.stop_requested):  # only a completed authoritative pass is pinned
             self._record_decisions(report, probes, emit)
@@ -118,7 +118,7 @@ class DefensePass:
         """What the defense did to legitimate work in this replay. A decision it blocked means legitimate work
         is broken, whatever the legit check's own reply looked like; one held for review is disclosed as an
         impact. Returns the patches that blocked legitimate work."""
-        fresh = Defender(self._profile, self._facts, escalation=level, exclude=excluded).select_all(report.findings).guard
+        fresh = Defender(self._profile, self._facts, escalation=level, exclude=excluded).select_all(report.guarded).guard
         blocked, held, culprits = [], [], set()
         for probe, was_held in probes.stopped(LEGIT):
             by = decide(fresh, probe)[1]  # a fresh copy names the patch without touching live review state
@@ -139,11 +139,11 @@ class DefensePass:
         decision this policy would now make differently. Ledger entries hold counts and keys, never inputs."""
         def factory():  # a fresh copy of exactly the verified policy, so no probe sees another's state
             return Defender(self._profile, self._facts, escalation=report.escalation,
-                            exclude=report.excluded).select_all(report.findings).guard
+                            exclude=report.excluded).select_all(report.guarded).guard
 
         report.decisions = take_baseline(probes, factory, sorted([e["id"], e["hash"]] for e in report.defense.applied))
         try:
-            report.policy = policy_data(report.findings, self._profile, self._facts, escalation=report.escalation,
+            report.policy = policy_data(report.guarded, self._profile, self._facts, escalation=report.escalation,
                                         exclude=report.excluded)
         except ValueError:  # known secrets need an operator key to be stored at all; never kept in plaintext
             report.policy = {}
@@ -167,21 +167,12 @@ class DefensePass:
               "against_run": self._decision_baseline.get("run"), "counts": counts,
               "compared": len(self._decision_baseline["probes"]), "flips": report.decision_drift})
 
-    def _source_gaps(self, static_raw: list[StaticFinding], source_fix: SourceFixResult) -> tuple[list[str], list[str]]:
-        """(unfixed findings that block a release, unfixed low-severity ones reported as advisory)."""
-        def where(f: StaticFinding) -> str:
-            return f"{f.kind} at {display(self._repo, f.file) if self._repo else f.file}:{f.line}"
-
-        unresolved = [f for f in static_raw if (f.kind, f.file, f.line) not in source_fix.resolved]
-        return ([f"{where(f)}: no verified source fix applied" for f in unresolved if f.blocking],
-                [f"{where(f)} ({f.severity} severity, advisory)" for f in unresolved if not f.blocking])
-
     def _apply_defense(self, report: AssessmentReport, level: int, source_fix: SourceFixResult,
                        source_gaps: list[str], emit: Callable[[dict], None], advisories: list[str] = (),
                        excluded: frozenset[str] = frozenset(), announce: bool = True) -> dict:
         """Build and attach the defense; ``announce=False`` for a probe of it that is not itself a verdict pass."""
         report.defense = Defender(self._profile, self._facts, review_queue=self._review_queue,
-                                  escalation=level, exclude=excluded).select_all(report.findings)
+                                  escalation=level, exclude=excluded).select_all(report.guarded)
         # A patch left out because it was proven to break legitimate work is not a gap: the verifier must
         # still prove the attack held without it, or the narrower defense is not kept.
         applied = set(report.defense.patch_ids) | excluded
@@ -190,18 +181,19 @@ class DefensePass:
         # scoped by no guard either, so unless something global covers its kind it is an unresolved gap too -- an
         # unpatched breach must never pass as "held" and ship.
         gaps: dict[str, list[str]] = {}
-        for finding in report.findings:
+        for finding in report.guarded:
             if not (finding.tool or finding.source == "dynamic"):
                 continue
             if missing := missing_patches(finding.kind, applied, has_tool=bool(finding.tool)):
                 gaps[finding.kind] = missing
         patch_event = {"patch_ids": report.defense.patch_ids, "patches": report.defense.applied,
                        "rationale": report.defense.rationale, "escalation": level, "escalation_note": ESCALATIONS[level],
-                       "scopes": patch_scopes(report.findings, report.defense.patch_ids),
+                       "scopes": patch_scopes(report.guarded, report.defense.patch_ids),
                        "source_changes": [{key: change[key] for key in ("kind", "path", "line", "sha256",
                                                                          "verified_by", "approval")}
                                           for change in source_fix.changes],
-                       "source_gaps": source_gaps, "advisories": list(advisories), "excluded": sorted(excluded)}
+                       "source_gaps": source_gaps, "advisories": list(advisories), "excluded": sorted(excluded),
+                       "code_held": list(report.code_held)}
         if "P11" in report.defense.patch_ids:  # an inferred manifest only forbids what an agent does not already hold
             patch_event["manifest"] = "declared" if self._manifest is not None else "inferred"
         if gaps:
@@ -214,23 +206,33 @@ class DefensePass:
 
     def _replay(self, report: AssessmentReport, attacks: list[tuple[str, str]],
                 emit: Callable[[dict], None], *, scopes: list[tuple[str, str, str]] | None = None,
-                control: RunControl | None = None) -> ProbeLog:
-        """Re-send each (breaching attack id, payload) against the patched agent; each event names the attack.
-        ``scopes`` re-tests each payload against its own original breach (see verifier.verify)."""
+                holes: list | None = None, control: RunControl | None = None, code_patched: bool = False,
+                held_by: dict[str, str] | None = None) -> ProbeLog:
+        """Re-send each (breaching attack id, payload) against the patched agent -- its source fixes loaded, its
+        runtime guards attached -- and name the layer that held it from that same reply: a runtime guard that had to
+        stop the attacker's call, or (once the code is patched) an agent that no longer tried the call at all.
+        ``scopes`` re-tests each payload against its own original breach and ``holes`` shares the release gate's
+        replays among payloads that opened the same hole (see verifier.verify); ``held_by`` is filled per payload."""
         payloads = [payload for _, payload in attacks]
 
-        def _replays(result_id: str) -> str:  # "reverify:<n>" is the n-th attack, counted from 1
-            return attacks[int(result_id.rsplit(":", 1)[1]) - 1][0]
+        def _attack(result_id: str) -> tuple[str, str]:  # "reverify:<n>" is the n-th attack, counted from 1
+            return attacks[int(result_id.rsplit(":", 1)[1]) - 1]
 
         def _on_reverify_start(result_id: str, payload: str) -> None:
             emit({"type": "attack_start", "id": result_id, "payload": payload, "technique": "reverify",
-                  "replays": _replays(result_id)})
+                  "replays": _attack(result_id)[0]})
 
         def _on_reverify_result(replay: Replay) -> None:
-            emit({"type": "attack_result", "id": replay.id, "technique": "reverify", "replays": _replays(replay.id),
+            origin, payload = _attack(replay.id)
+            by = "" if not replay.blocked else RUNTIME_GUARD if replay.stopped or not code_patched else CODE_PATCH
+            if held_by is not None:
+                held_by[payload] = by
+            emit({"type": "attack_result", "id": replay.id, "technique": "reverify", "replays": origin,
                   "breached": not replay.blocked,
-                 "outcome": "held" if replay.blocked else "breached",
-                 "detail": f"the exact payload that breached, re-sent {replay.trials}x against the patched "
+                 "outcome": "held" if replay.blocked else "breached", "held_by": by,
+                 "detail": ("held by the code patch: the patched agent no longer tried the attacker's call; "
+                            if by == CODE_PATCH else "")
+                           + f"the exact payload that breached, re-sent {replay.trials}x against the patched "
                            f"agent — the original breach held {replay.held} of {replay.trials}"
                            + (f"; still breached: {replay.proof}" if replay.proof else "")
                            + (f"; a different breach appeared: {replay.off_scope_proof}" if replay.off_scope else "")
@@ -244,12 +246,13 @@ class DefensePass:
         def controlled(factory):
             if control is None:
                 return factory
-            return lambda: _ControlledTarget(factory(), control)
+            return lambda: ControlledTarget(factory(), control)
 
         # Each replay and legit check on its own fresh, identically-patched copy, so they run in parallel;
         # each copy's guard records the inputs of every decision it makes (purpleteam.decisions).
         report.verification = verify(None, self._oracle, attacks=payloads, legit=self._legit,
                                      trials=self._verify_trials, max_residual=self._max_residual,
+                                     scopes=scopes, holes=holes,
                                      on_attack_start=_on_reverify_start, on_attack_result=_on_reverify_result,
                                      factory=controlled(lambda: self._factory(DecisionRecorder(guard, probes, ATTACK))),
                                      legit_factory=controlled(lambda: self._factory(DecisionRecorder(guard, probes, LEGIT))))
@@ -285,19 +288,3 @@ class DefensePass:
 
         if self._explainer and final:  # only the authoritative pass is explained: earlier ones are superseded
             report.explanations = parallel_map(lambda f: self._explain(f, report), report.findings)  # one call each
-
-    def _explain(self, finding: Finding, report: AssessmentReport) -> Explanation:
-        try:
-            return self._explainer(finding, report.defense, report.verification)
-        except Exception as error:  # a model or network failure costs this explanation, never the run
-            return Explanation(facts={}, text="", verified=False,
-                               issues=[f"explanation unavailable ({type(error).__name__})"])
-
-    def _verification_attacks(self, breaches: list[CorpusResult]) -> list[str]:
-        """Every distinct payload among ``breaches`` — a regression case can coincide with a fresh breach."""
-        seen, payloads = set(), []
-        for b in breaches:
-            if b.payload and b.payload not in seen:
-                seen.add(b.payload)
-                payloads.append(b.payload)
-        return payloads

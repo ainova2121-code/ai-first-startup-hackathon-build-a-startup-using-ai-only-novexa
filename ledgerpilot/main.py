@@ -20,48 +20,54 @@ from ledgerpilot.ports import EventSink, Guard, NoGuard, NullSink
 from ledgerpilot.utils.config import Settings
 
 
-_CHANNEL_TAG = "<|channel|>"
-_HARMONY_RETRIES = 4
+# Provider error codes for a generation the provider itself rejected (400) before any reply reached us.
+REJECTED_GENERATION_CODES = ("tool_use_failed", "output_parse_failed")
+# Each retry samples a little more freely: at temperature 0 a retry reproduces the same rejected output.
+RETRY_TEMPERATURES = (0.3, 0.6, 0.9)
 
 
-def _is_harmony_tool_name_error(error: Exception) -> bool:
-    return isinstance(error, APIStatusError) and _CHANNEL_TAG in str(error)
+def is_rejected_generation(error: Exception) -> bool:
+    if not (isinstance(error, APIStatusError) and error.status_code == 400):
+        return False
+    return getattr(error, "code", None) in REJECTED_GENERATION_CODES or any(
+        code in str(error) for code in REJECTED_GENERATION_CODES)
 
 
-class _HarmonySafeChatOpenAI(ChatOpenAI):
-    """Some providers (observed on Groq's openai/gpt-oss-20b) sometimes generate a tool call whose
-    own name is corrupted with OpenAI's "harmony" response format's channel tag -- e.g.
-    "find_duplicates<|channel|>commentary" instead of "find_duplicates" -- and Groq's own server
-    rejects that generation outright (400, code "tool_use_failed") before any usable response
-    reaches this client at all, regardless of what the request asked for (reproduced on a clean,
-    non-adversarial baseline, so this is not an attack-detection concern). A known, provider-side
-    issue (langchain-ai/langchain#32765), not specific to this codebase, and not something a
-    client-side parser fix can touch, since there is no successful response to parse -- the
-    generation is rejected server-side. The model's output is not fully deterministic even at
-    temperature=0 on Groq's hosted inference, so a retry can succeed where the first attempt did
-    not; this retries only this one, specifically-identified failure, not errors in general."""
+class _RetryingChatOpenAI(ChatOpenAI):
+    """Groq's openai/gpt-oss models sometimes produce output Groq's own server rejects outright (400):
+    a tool call whose name carries the harmony format's channel tag ("find_duplicates<|channel|>commentary",
+    code ``tool_use_failed``) or output it cannot parse at all (``output_parse_failed``). Reproduced on
+    legitimate requests too, so it is a provider-side generation fault (langchain-ai/langchain#32765), not
+    something the request did. Only that rejection is asked again, at a slightly higher temperature each
+    time; every other error is raised unchanged."""
 
-    def _generate(self, *args, **kwargs):
-        last = None
-        for _ in range(_HARMONY_RETRIES):
+    def _temperatures(self) -> tuple[float | None, ...]:
+        floor = self.temperature or 0.0
+        return (None, *(max(floor, t) for t in RETRY_TEMPERATURES))
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        *retries, last = self._temperatures()
+        for temperature in retries:
             try:
-                return super()._generate(*args, **kwargs)
-            except Exception as error:  # noqa: BLE001 -- re-raised unchanged unless it matches
-                if not _is_harmony_tool_name_error(error):
+                return super()._generate(messages, stop, run_manager, **_with(kwargs, temperature))
+            except APIStatusError as error:
+                if not is_rejected_generation(error):
                     raise
-                last = error
-        raise last
+        return super()._generate(messages, stop, run_manager, **_with(kwargs, last))
 
-    async def _agenerate(self, *args, **kwargs):
-        last = None
-        for _ in range(_HARMONY_RETRIES):
+    async def _agenerate(self, messages, stop=None, run_manager=None, **kwargs):
+        *retries, last = self._temperatures()
+        for temperature in retries:
             try:
-                return await super()._agenerate(*args, **kwargs)
-            except Exception as error:  # noqa: BLE001 -- re-raised unchanged unless it matches
-                if not _is_harmony_tool_name_error(error):
+                return await super()._agenerate(messages, stop, run_manager, **_with(kwargs, temperature))
+            except APIStatusError as error:
+                if not is_rejected_generation(error):
                     raise
-                last = error
-        raise last
+        return await super()._agenerate(messages, stop, run_manager, **_with(kwargs, last))
+
+
+def _with(kwargs: dict, temperature: float | None) -> dict:
+    return kwargs if temperature is None else {**kwargs, "temperature": temperature}
 
 
 def chat_model(settings: Settings) -> BaseChatModel:
@@ -69,7 +75,7 @@ def chat_model(settings: Settings) -> BaseChatModel:
         return _local_chat_model(settings.llm_model)
     if not settings.llm_api_key.get_secret_value():
         raise RuntimeError("Set HF_TOKEN or LEDGERPILOT_LLM_API_KEY to reach the model endpoint.")
-    return _HarmonySafeChatOpenAI(
+    return _RetryingChatOpenAI(
         model=settings.llm_model,
         base_url=settings.llm_base_url,
         api_key=settings.llm_api_key,

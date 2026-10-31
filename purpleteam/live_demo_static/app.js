@@ -140,6 +140,7 @@ function dispatch(e) {
       advance(0); renderDiscovery(e); break;
     case "attack_start": onAttackStart(e); break;
     case "attack_result": onAttackResult(e); break;
+    case "finding_detected": advance(2); renderFindingDetected(e); break;
     case "patch_applied": advance(2); renderRuntimeGuards(e); break;
     case "source_baseline": renderSourceBaseline(e); break;
     case "static_scan": advance(2); renderStaticScan(e); break;

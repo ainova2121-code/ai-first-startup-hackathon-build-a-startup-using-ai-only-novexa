@@ -203,7 +203,7 @@ flowchart TD
   Defend[Defender selects runtime guards]
   Fix[Verified source fixes\nrescan + invariant, snapshotted, restorable]
   Reload[Edited target reloaded]
-  Replay[Every breaching payload re-attacked x3\nrelease gate on the residual breach rate]
+  Replay[Every breaching payload re-attacked x16\nrelease gate: residual breach rate at most 20%]
   Seal[Signed ledger\nper-event Ed25519 + ML-DSA-65, Merkle checkpoint,\nTPM P-256, RFC 3161 timestamp]
 
   Browser --> Console --> Discover --> Attack --> Oracle

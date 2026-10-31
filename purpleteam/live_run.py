@@ -5,7 +5,7 @@
 * ``full``     -- the standard assessment: targeted attacks, live patching, re-attack, verified source fixes, decision
                   drift, a signed and anchored seal.
 * ``advanced`` -- full, plus the fixed jailbreak corpus, its base64-disguised and document-buried variants, adaptive
-                  (TAP) search, and five verification trials instead of three, for the tightest residual bound.
+                  (TAP) search, and a tighter release gate (15% instead of 20%: more replays of every breach).
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ from dotenv import load_dotenv
 
 from ledgerpilot.utils.config import Settings
 from purpleteam.adapter import TargetUnavailable, TracedTarget
-from purpleteam.assessment import Assessment
+from purpleteam.assessment import RELEASE_GATE, Assessment
 from purpleteam.attack.claims import MODEL_ATTACKS_OFF, ONLY_STATIC, model_free_attacks
 from purpleteam.attack.identity import identity_attacks
 from purpleteam.attack.corpus import AttackTemplate, action_objective, build_corpus
@@ -44,7 +44,7 @@ from purpleteam.run_history import Run, RunStore
 from purpleteam.run_control import RunControl
 from purpleteam.hardening_scan import CompositeScanner, PromptHardeningScanner
 from purpleteam.sast import BanditScanner
-from purpleteam.showcase import showcase
+from purpleteam.showcase import demo_dataset, showcase
 from purpleteam.targets.ledgerpilot import (
     SENDER_SEES_AGENT_REPLY, LedgerPilotTarget, caller_scope, credentials, discover_profile, reload_source)
 
@@ -127,6 +127,20 @@ def discovery_event(profile: TargetProfile, creds: dict[str, str], manifest: Per
                        "retrieval": len(profile.retrieval_tools), "memory": len(profile.memory_tools)},
             "dangerous_tools": sorted(profile.dangerous_tools),
             "findings": view["findings"], "needs_review": view["needs_review"]}
+
+
+# The demo re-sends each breaching question once against the full defense (and at most once more against the code
+# patch alone): at most two model runs per question, so a whole demo run stays short.
+DEMO_GATE = 0.8
+
+
+def release_gate(advanced: bool) -> float:
+    """The residual breach rate a run must prove, at 95% confidence, before it may ship: ``PURPLETEAM_RELEASE_GATE``
+    (default ``DEMO_GATE``; the platform's own default is 20%, 16 replays per hole), and the platform default in
+    advanced mode. A looser gate replays less and finishes sooner; the evidence states the bound each run reached."""
+    if advanced:
+        return RELEASE_GATE
+    return float(os.environ.get("PURPLETEAM_RELEASE_GATE", DEMO_GATE))
 
 
 def _anchorer() -> Callable[[dict], tuple[dict, list[str]]] | None:
@@ -228,6 +242,7 @@ async def assess(run: Run, runs: RunStore | None, snapshots: SourceSnapshots, pu
 
         # The target database is visible the moment discovery is done (make_target remembers it). One legitimate
         # request then lights the discovery path, fills the database, and proves the target can answer at all.
+        legit_seen: dict = {}
         try:
             preview = make_target(None)
             preview.reset()
@@ -235,7 +250,7 @@ async def assess(run: Run, runs: RunStore | None, snapshots: SourceSnapshots, pu
             # what the run changed. Captured before the warm-up send, so even that shows as a change.
             run.write_json("database_baseline", preview.database_snapshot())
             if not (control and control.stop_requested):
-                preview.send(LEGIT_INVOICE)
+                legit_seen[LEGIT_INVOICE] = preview.send(LEGIT_INVOICE)  # also the legit work's baseline
         except TargetUnavailable as exc:  # no answer to a normal request: every attack would be untested, so stop now
             raise RuntimeError(f"The target cannot answer a normal request ({exc}). Fix its model settings and run "
                                "again; no attack was sent.") from exc
@@ -251,7 +266,7 @@ async def assess(run: Run, runs: RunStore | None, snapshots: SourceSnapshots, pu
             codemod_catalog=catalog, codemod_complete=groq_complete, source_snapshots=snapshots,
             reload_target=reload_source,
             decision_baseline={**approved.read_json("decisions"), "run": approved.id} if approved else None,
-            verify_trials=5 if advanced else 3)
+            max_residual=release_gate(advanced), legit_seen=legit_seen)
         # ONLY_STATIC (the demo default): no attacker model, only ``model_free_attacks``; the defender keeps its model
         # for drafting fixes. With the attacker model on, ``full`` uses the targeted attack (it reads each agent's
         # own prompt). ``advanced`` adds disguised and document-buried variants either way.
@@ -266,7 +281,8 @@ async def assess(run: Run, runs: RunStore | None, snapshots: SourceSnapshots, pu
         elif attack_type in {"full", "showcase"} or ONLY_STATIC:  # custom dataset (full adds context-aware + adaptive)
             templates = model_free_attacks(profile) + identity_attacks(  # only identity attacks that could breach
                 permissions_declared=manifest is not None, replies_seen=SENDER_SEES_AGENT_REPLY)
-            templates = showcase(runs, profile.name, templates) if attack_type == "showcase" else templates
+            templates = (showcase(runs, profile.name, templates) if attack_type == "showcase" else
+                         demo_dataset(templates) if attack_type == "all" else templates)
         elif advanced:
             templates = None
         else:

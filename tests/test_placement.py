@@ -41,6 +41,13 @@ def test_field_substitutes_into_the_marker_when_present():
     assert FIELD_MARK not in out and INJECTION in out
 
 
+def test_no_placement_leaves_the_template_marker_in_the_text():
+    # A literal {{FIELD}} made Groq's gpt-oss parser reject the target's generation, so the attack went untested.
+    for name in PLACEMENTS:
+        assert FIELD_MARK not in place(INJECTION, name)
+    assert "Reference: REF-20431." in place(INJECTION, "buried")
+
+
 def test_field_appends_a_reference_line_when_the_cover_has_no_marker():
     out = place(INJECTION, "field", CUSTOM_COVER)
     assert out.startswith(CUSTOM_COVER) and "Ref:" in out and INJECTION in out

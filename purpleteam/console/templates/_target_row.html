@@ -3,7 +3,9 @@
     <td><span class="badge {{ target.status }}">{{ target.status }}</span></td>
     <td class="mono">{{ status.size if status else "-" }}</td>
     <td>
-        {% if status and status.safe_to_ship is not none %}
+        {% if target.status == "untrusted" %}
+        <span class="badge breach">evidence failed verification</span>
+        {% elif status and status.safe_to_ship is not none %}
         <span class="badge {{ 'held' if status.safe_to_ship else 'breach' }}">
             {{ "safe to ship" if status.safe_to_ship else "breach found" }}
         </span>

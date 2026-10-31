@@ -92,3 +92,25 @@ def test_after_seq_default_includes_the_very_first_event(tmp_path):
     web, admin_token, _ = _app(tmp_path, ledger=ledger)
     body = web.get("/ledger/export", headers=_auth(admin_token)).json()
     assert [e["payload"]["n"] for e in body["events"]] == [0]
+
+
+def test_the_trust_endpoint_serves_only_public_keys_and_only_to_an_admin(tmp_path):
+    from purpleteam.audit.ledger import AuditLedger
+    from purpleteam.gateway import Provider, create_gateway
+    from purpleteam.gateway_keys import ADMIN, TARGET, GatewayKeys
+    from purpleteam.gateway_observer import GatewayObserver
+    from fastapi.testclient import TestClient
+    from pydantic import SecretStr
+
+    ledger = AuditLedger(tmp_path / "audit.jsonl")
+    ledger.append("gateway", "decision", {})
+    keys = GatewayKeys()
+    admin = keys.issue("a", ADMIN, ttl_seconds=60, max_requests=10)
+    target = keys.issue("t", TARGET, ttl_seconds=60, max_requests=10)
+    web = TestClient(create_gateway(GatewayObserver(), keys=keys, ledger=ledger,
+                                    openai=Provider("https://provider.test/v1", SecretStr("x"))))
+
+    assert web.get("/ledger/trust", headers={"authorization": f"Bearer {target}"}).status_code == 403
+    body = web.get("/ledger/trust", headers={"authorization": f"Bearer {admin}"}).json()
+    assert body["log_id"] == ledger.log_id and body["keys"] == ledger.public_keys()
+    assert "PRIVATE" not in str(body) and "checkpoint" not in body

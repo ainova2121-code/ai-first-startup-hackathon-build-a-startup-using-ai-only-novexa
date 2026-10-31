@@ -21,6 +21,9 @@ B2B, BYOC (bring your own cloud) AI purple-team platform for AI agent systems in
 - Runtime defenses integrate through an LLM gateway, tool/egress proxies or the target's Guard port. Static source fixes are exact-match codemods: either already in the operator's approved catalog, or model-drafted and auto-approved only when both the scanner rescan and the independent invariant (`codemods/invariants.py`) pass, the invariant also rejects the original code, and the fix adds no import and no call its file did not already make — labelled everywhere as not human-reviewed; a rescan-only fix is never auto-applied. The assessment applies them atomically in the configured target repository, snapshots each original first (`codemods/restore.py`), and one restore reverts every edit. A dynamic attack finding alone never authorizes an arbitrary source rewrite. The run records the edited path and hash, displays the actual before/after source, and does not mark the target safe to ship until the edited target is loaded and re-tested.
 - BYOC applies to the purple-team platform only. LedgerPilot is a plain demo target.
 
+- Operator state that can change a target's source -- codemod catalog entries and source snapshots -- is sealed with the operator key (`operator_seal.py`). An unsealed or edited entry is never treated as human-reviewed, and a snapshot is only written back from a sealed store.
+- The fleet console verifies every gateway event against the gateway's pinned public keys (`audit/stream.py`) before it counts toward any verdict.
+
 - Policy-decision drift (`decisions.py`): every verified run pins each guard decision with its exact inputs (digest in the signed ledger). A later policy that loosens any decision made on verified attack input, or drops a redaction, is not safe to ship, and the gateway refuses to enforce it.
 
 ## Platform security (LedgerPilot is exempt: it is vulnerable on purpose)

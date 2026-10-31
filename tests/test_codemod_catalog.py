@@ -2,7 +2,7 @@
 never reused for a different piece of code just because the finding kind matches."""
 
 from purpleteam.codemods.base import VerifiedCodemod
-from purpleteam.codemods.catalog import HUMAN_REVIEWED, UNRECORDED, CodemodCatalog, pattern_key
+from purpleteam.codemods.catalog import HUMAN_REVIEWED, UNRECORDED, UNSEALED, CodemodCatalog, pattern_key
 
 CODEMOD = VerifiedCodemod("sql_injection", "cursor.execute(f'...')", "cursor.execute('...', (x,))", "parameterized")
 
@@ -57,3 +57,18 @@ def test_an_entry_with_no_recorded_approval_is_never_presumed_human_reviewed(tmp
     key = pattern_key(CODEMOD.kind, CODEMOD.original)
     (tmp_path / f"{key}.codemod.json").write_text(json.dumps(asdict(CODEMOD)))
     assert CodemodCatalog(tmp_path).approval(key) == UNRECORDED
+
+
+def test_a_human_reviewed_label_holds_only_under_the_operators_seal(tmp_path):
+    import json
+    key = pattern_key(CODEMOD.kind, CODEMOD.original)
+    catalog = CodemodCatalog(tmp_path)
+    catalog.approve(key, CODEMOD)
+    assert catalog.approval(key) == "human-reviewed"
+
+    path = tmp_path / f"{key}.codemod.json"
+    entry = json.loads(path.read_text())
+    path.write_text(json.dumps({**entry, "replacement": "something else"}))  # edited after it was sealed
+    assert catalog.approval(key) == UNSEALED
+    path.write_text(json.dumps({**entry, "seal": "0" * 64}))
+    assert catalog.approval(key) == UNSEALED

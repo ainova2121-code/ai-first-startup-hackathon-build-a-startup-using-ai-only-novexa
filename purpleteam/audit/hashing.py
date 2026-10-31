@@ -49,6 +49,39 @@ def merkle_root(hashes: list[str]) -> str:
     return _tree_hash([_leaf(h) for h in hashes]).hex()
 
 
+class MerkleFrontier:
+    """``merkle_root`` kept up to date one leaf at a time from only the roots of its perfect subtrees (largest
+    first, at most log2(n) of them), so a log read page by page needs no copy of every earlier hash."""
+
+    def __init__(self, subtrees: list[list] | None = None) -> None:
+        self._subtrees = [(int(size), bytes.fromhex(root)) for size, root in subtrees or []]
+        sizes = [size for size, _ in self._subtrees]
+        if any(size < 1 or size & (size - 1) for size in sizes) or sizes != sorted(sizes, reverse=True) \
+                or len(set(sizes)) != len(sizes):
+            raise ValueError("a Merkle frontier is distinct powers of two, largest first")
+
+    @property
+    def size(self) -> int:
+        return sum(size for size, _ in self._subtrees)
+
+    def append(self, hash_hex: str) -> None:
+        size, root = 1, _leaf(hash_hex)
+        while self._subtrees and self._subtrees[-1][0] == size:
+            root, size = _node(self._subtrees.pop()[1], root), size * 2
+        self._subtrees.append((size, root))
+
+    def root(self) -> str:
+        if not self._subtrees:
+            return GENESIS
+        root = self._subtrees[-1][1]
+        for _, left in reversed(self._subtrees[:-1]):
+            root = _node(left, root)
+        return root.hex()
+
+    def to_list(self) -> list[list]:
+        return [[size, root.hex()] for size, root in self._subtrees]
+
+
 def merkle_tree(hashes: list[str]) -> dict | None:
     """The whole tree ``merkle_root`` folds, built by the same leaf and node functions, for display:
     ``{"hash", "leaf": seq}`` at the bottom, ``{"hash", "left", "right"}`` above. Its top hash is the root."""

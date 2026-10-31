@@ -3,8 +3,10 @@
 import asyncio
 import base64
 
+import pytest
+
 from purpleteam.adapter import Observation, ToolCall
-from purpleteam.assessment import Assessment
+from purpleteam.assessment import RELEASE_GATE, Assessment
 from purpleteam.audit.ledger import AuditLedger
 from purpleteam.oracle import CANARY_ACCOUNT, Verdict
 from purpleteam.patches.base import Blocked
@@ -56,6 +58,15 @@ def test_a_breach_reachable_only_through_disguise_is_still_verified_against_its_
     # not silently skipped because "override:base64" has no entry in the original template list
     assert report.verification is not None and report.verification.attack_blocked
     assert report.safe_to_ship
+
+
+def test_a_shipped_fix_is_proven_under_the_release_gate_and_too_few_trials_are_refused(tmp_path):
+    ledger = AuditLedger(tmp_path / "audit.jsonl")
+    report = asyncio.run(Assessment(lambda guard: _ScannerAgent(guard), ORACLE, PROFILE, ledger,
+                                    legit=[("Look up acme", _looked_up)]).run([ATTACK], disguise_with=["base64"]))
+    assert report.safe_to_ship and report.verification.residual <= RELEASE_GATE  # 16 clean replays, not 3
+    with pytest.raises(ValueError, match="at least 16"):
+        Assessment(lambda guard: _ScannerAgent(guard), ORACLE, PROFILE, ledger, legit=[], verify_trials=3)
 
 
 def test_a_finding_kind_the_catalog_has_no_patch_for_is_reported_as_an_error_not_shipped(tmp_path, monkeypatch):

@@ -184,4 +184,6 @@ def test_operator_redaction_patterns_round_trip_into_the_rebuilt_output_redactor
     findings = [Finding("exfiltration", "lookup_vendor", "vendor", "leak")]
     original, rebuilt, path = _rebuilt(findings, {"redact_patterns": [r"\bMRN-\d{6}\b"]}, tmp_path)
     assert json.loads(path.read_text())["policy"]["facts"]["redact_patterns"] == [r"\bMRN-\d{6}\b"]
-    assert "MRN-123456" not in rebuilt.screen("vendor", "record MRN-123456", "tool_result")
+    # Through the rebuilt redactor itself: where P2's classifier is installed it may refuse this text first.
+    redactor = next(patch for patch in rebuilt.patches if patch.id == "P9")
+    assert "MRN-123456" not in redactor.screen("vendor", "record MRN-123456", "tool_result")

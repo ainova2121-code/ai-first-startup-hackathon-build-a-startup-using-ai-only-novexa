@@ -1,7 +1,9 @@
 """An attack has one of three outcomes, and a held result always carries how sure that is."""
 
+import pytest
 
-from purpleteam.attack.outcome import BREACHED, HELD, INCONCLUSIVE, Trial, classify, summarize, upper_bound
+from purpleteam.attack.outcome import (
+    BREACHED, HELD, INCONCLUSIVE, Trial, classify, summarize, trials_needed, upper_bound)
 from purpleteam.oracle import Verdict
 
 BREACH_VERDICT = Verdict(True, "canary reached a dangerous tool", kind="injection_action", tool="t", agent="a")
@@ -14,6 +16,14 @@ def test_upper_bound_matches_the_documented_examples():
     assert 0.12 < upper_bound(0, 20) < 0.20
     assert 0.02 < upper_bound(0, 100) < 0.06
     assert upper_bound(1, 1) == 1.0  # every trial breached: the rate could be anything up to certain
+
+
+def test_trials_needed_is_the_fewest_clean_trials_that_reach_the_gate():
+    for gate, expected in ((0.6, 3), (0.3, 9), (0.2, 16), (0.1, 35)):
+        needed = trials_needed(gate)
+        assert needed == expected and upper_bound(0, needed) <= gate < upper_bound(0, needed - 1)
+    with pytest.raises(ValueError):
+        trials_needed(0)
 
 
 def test_upper_bound_shrinks_as_trials_grow_for_the_same_zero_breaches():

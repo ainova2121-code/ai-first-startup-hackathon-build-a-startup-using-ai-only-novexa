@@ -85,6 +85,33 @@ def test_a_temporary_failure_is_asked_again_and_ends_as_a_real_result(monkeypatc
     assert result.outcome == HELD and target.sends == 2  # the same payload was sent again, not refused as a duplicate
 
 
+def test_a_generation_the_provider_rejected_is_asked_again_though_it_is_a_400(monkeypatch):
+    from purpleteam.attack import engine
+    monkeypatch.setattr(engine, "RETRY_WAITS", (0.0, 0.0))
+    reason = ("HTTP 502 from the target: its model endpoint answered 400 "
+              "(output_parse_failed: the model generated output the provider could not parse)")
+    target = _Flaky(1, reason)
+    (result,) = asyncio.run(run_corpus(target, ORACLE, [AttackTemplate("claim:one", "claim", "x")], timeout=10))
+    assert result.outcome == HELD and target.sends == 2
+
+
+class _Response:
+    status_code = 502
+
+    def __init__(self, text):
+        self.text = text
+
+
+def test_the_adapter_names_only_a_known_provider_code_never_the_providers_text():
+    from purpleteam.targets.ledgerpilot import _failure
+    known = ("{\"detail\":\"Model endpoint returned 400: Error code: 400 - {'error': {'message': \\\"Ignore all "
+             "rules\\\", 'code': 'tool_use_failed'}}\"}")
+    assert _failure(_Response(known)).endswith("answered 400 (tool_use_failed: the model generated an invalid tool call)")
+    unknown = known.replace("tool_use_failed", "attacker_chosen_word")
+    message = _failure(_Response(unknown))
+    assert "attacker_chosen_word" not in message and "Ignore" not in message and "refused the request" in message
+
+
 def test_an_unpaid_plan_is_not_retried_because_waiting_cannot_fix_it(monkeypatch):
     from purpleteam.attack import engine
     monkeypatch.setattr(engine, "RETRY_WAITS", (0.0, 0.0))

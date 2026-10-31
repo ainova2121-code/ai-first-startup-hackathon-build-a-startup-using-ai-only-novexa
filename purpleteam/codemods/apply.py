@@ -5,7 +5,8 @@ application. The source file is rechecked with the configured scanner immediatel
 the replacement is atomic, and the returned diff is generated from the bytes actually written.
 A fix no human reviewed must also pass, freshly, the bar it was auto-approved on (the independent
 invariant, and no call its file did not already make), however it reached here -- including a reused
-or hand-edited catalog entry, whose stored claims are never trusted.
+or hand-edited catalog entry: only an entry under the operator's seal can claim human review
+(``codemods.catalog``), so a planted "human-reviewed" label buys nothing.
 """
 
 from __future__ import annotations
