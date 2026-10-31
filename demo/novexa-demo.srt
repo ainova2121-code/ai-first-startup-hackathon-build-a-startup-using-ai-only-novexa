@@ -1,0 +1,252 @@
+1
+00:00:00,700 --> 00:00:04,100
+Hi, I'm Aishwarya from Novexa.
+
+2
+00:00:04,200 --> 00:00:06,800
+I'm building a startup on AI security.
+
+3
+00:00:06,900 --> 00:00:10,100
+For this hackathon, I have built
+
+4
+00:00:10,200 --> 00:00:15,300
+an agentic purple teaming system where you can plug in your multi-agent system
+
+5
+00:00:15,300 --> 00:00:19,000
+in order to make it entirely secure.
+
+6
+00:00:19,100 --> 00:00:23,500
+So let's start with the demo.
+
+7
+00:00:24,900 --> 00:00:29,000
+Our purple teaming platform has five parts.
+
+8
+00:00:29,100 --> 00:00:30,300
+First is discovery.
+
+9
+00:00:30,400 --> 00:00:35,800
+It scans the entire code base to discover all the tools and agents.
+
+10
+00:00:35,900 --> 00:00:38,500
+Next is the attack, performed by the red teaming agent,
+
+11
+00:00:38,500 --> 00:00:40,800
+which continuously sends prompts to get sensitive information
+
+12
+00:00:40,800 --> 00:00:43,900
+or to perform a dangerous modification.
+
+13
+00:00:44,000 --> 00:00:47,200
+Next is the patch, performed by the blue team,
+
+14
+00:00:47,200 --> 00:00:51,400
+to apply the pre-written code-level patches chosen from the catalog.
+
+15
+00:00:51,500 --> 00:00:54,600
+It also comes with a runtime detector,
+
+16
+00:00:54,600 --> 00:00:57,300
+which detects the intent of the attack and resists the attack.
+
+17
+00:00:57,400 --> 00:01:02,000
+Next is the verification agent. After the patch has been applied,
+
+18
+00:01:02,000 --> 00:01:07,700
+it will re-attack with the same prompt which caused the breach.
+
+19
+00:01:07,800 --> 00:01:10,500
+Next is the signature.
+
+20
+00:01:10,600 --> 00:01:12,500
+This comes in the audit ledger part.
+
+21
+00:01:12,600 --> 00:01:18,300
+So every event that is performed will be signed, so that we get evidence
+
+22
+00:01:18,300 --> 00:01:21,200
+of what action was performed and what the action did.
+
+23
+00:01:21,300 --> 00:01:25,200
+So this is the target,
+
+24
+00:01:25,300 --> 00:01:28,300
+which is called LedgerPilot. It is basically an accounts payable system
+
+25
+00:01:28,300 --> 00:01:33,000
+where the agent reads the invoice and matches the vendor in the database.
+
+26
+00:01:33,000 --> 00:01:35,000
+And it also schedules the payment.
+
+27
+00:01:35,100 --> 00:01:40,100
+Since this is autonomous, an attacker can pose a threat where he can make
+
+28
+00:01:40,200 --> 00:01:43,200
+the amount payable to his bank account directly.
+
+29
+00:01:43,300 --> 00:01:45,800
+So let's start with the assessment.
+
+30
+00:01:46,500 --> 00:01:50,800
+The discovery agent has started to discover all the agents and tools.
+
+31
+00:01:51,900 --> 00:01:55,800
+As soon as the discovery agent has discovered all the agents,
+
+32
+00:01:55,900 --> 00:02:02,400
+the red teaming agent is going to run the prompt injection or prompt-based attacks.
+
+33
+00:02:02,500 --> 00:02:05,500
+For this, I've created a custom dataset.
+
+34
+00:02:06,400 --> 00:02:12,100
+So this is the database where you can find all the vendor information,
+
+35
+00:02:12,100 --> 00:02:15,500
+purchase orders, receipts, and everything.
+
+36
+00:02:16,700 --> 00:02:21,500
+Here you can see the red teaming agent has initiated the attack.
+
+37
+00:02:28,000 --> 00:02:33,800
+Here you can see all the agents and the tools that have been called.
+
+38
+00:02:34,900 --> 00:02:39,300
+The prompt was able to breach the vulnerable agent system
+
+39
+00:02:39,300 --> 00:02:41,900
+and reached schedule payment.
+
+40
+00:02:42,000 --> 00:02:46,700
+Here you can see the target API response, and this is the output of each agent.
+
+41
+00:02:46,800 --> 00:02:53,600
+You can see the payment has been scheduled for the attacker's bank account.
+
+42
+00:02:54,600 --> 00:02:59,200
+As soon as the breach is identified, the defender agent is going to
+
+43
+00:02:59,300 --> 00:03:04,800
+autonomously patch the files directly.
+
+44
+00:03:06,300 --> 00:03:08,100
+Next comes the audit ledger.
+
+45
+00:03:08,200 --> 00:03:13,400
+This audit ledger keeps the records of all the events that have happened.
+
+46
+00:03:13,600 --> 00:03:15,000
+This is the Merkle tree.
+
+47
+00:03:15,100 --> 00:03:21,000
+Here you can see each and every attack or event initiated by the agent is signed.
+
+48
+00:03:21,100 --> 00:03:25,800
+So each signature, or each event, is called a log.
+
+49
+00:03:25,900 --> 00:03:32,500
+These multiple logs are combined to form the parent log,
+
+50
+00:03:32,500 --> 00:03:38,200
+and the parent log will eventually modify the Merkle root.
+
+51
+00:03:38,300 --> 00:03:43,900
+So it keeps on modifying the Merkle hash until the events stop being generated.
+
+52
+00:03:44,000 --> 00:03:50,000
+For example, if an attacker has initiated an attack,
+
+53
+00:03:51,200 --> 00:03:54,500
+it will automatically change this Merkle root.
+
+54
+00:03:54,600 --> 00:03:59,500
+The signature is done by hybrid post-quantum cryptographic signers,
+
+55
+00:03:59,600 --> 00:04:02,400
+Ed25519 and ML-DSA-65.
+
+56
+00:04:02,500 --> 00:04:11,200
+It is also co-signed by the TPM 2.0 hardware chip,
+
+57
+00:04:11,300 --> 00:04:16,200
+which has a key built in from manufacturing.
+
+58
+00:04:16,300 --> 00:04:22,000
+For the live deployment URL,
+
+59
+00:04:22,100 --> 00:04:27,400
+I cannot show the TPM signing, because I cannot remotely call this TPM to sign the event.
+
+60
+00:04:27,500 --> 00:04:31,500
+So I have replaced it with software-based signing.
+
+61
+00:04:31,600 --> 00:04:37,200
+In future, I'm going to expand this entire system to support
+
+62
+00:04:37,300 --> 00:04:44,500
+multimodal systems like text, video, images, et cetera.
+
+63
+00:04:44,700 --> 00:04:47,000
+Thank you so much.
+
