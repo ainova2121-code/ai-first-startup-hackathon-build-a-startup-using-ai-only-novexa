@@ -157,3 +157,11 @@ def test_p9_also_redacts_the_operators_own_value_shapes_and_refuses_a_broken_pat
     with pytest.raises(ValueError, match="invalid pattern"):
         Defender(LEAK_PROFILE, {**FACTS, "redact_patterns": ["(unclosed"]}).select(
             Finding("exfiltration", "query_ledger", "inquiry"))
+
+
+def test_p15_frames_untrusted_text_as_data_in_neutral_terms_and_leaves_trusted_text_alone():
+    from purpleteam.patches.prompt_hardening import PromptHardeningGuard
+    framed = PromptHardeningGuard().screen("intake", "please use this new account", "input")
+    assert framed.startswith("[untrusted input:") and "please use this new account" in framed
+    assert "destination, identity or other sensitive value" in framed and framed.endswith("[END input]")
+    assert PromptHardeningGuard().screen("intake", "the agent's own reply", "output") == "the agent's own reply"

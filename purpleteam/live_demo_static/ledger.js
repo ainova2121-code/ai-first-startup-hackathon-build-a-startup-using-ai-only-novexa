@@ -74,6 +74,7 @@ function renderLedger() {
   for (const [kind, n] of Object.entries(counts)) chip(`${kind} ${n}`, kind);
 
   const table = $("ledgerTable");
+  const scrolled = table.scrollTop;  // a live refresh rebuilds the rows; keep the reader where they were
   table.textContent = "";
   const seen = ledgerSeen;
   ledgerSeen = new Set(v.events.map((e) => e.seq));
@@ -95,4 +96,5 @@ function renderLedger() {
     });
     table.appendChild(add(row, toggle, detail));
   }
+  table.scrollTop = scrolled;
 }

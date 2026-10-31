@@ -208,11 +208,12 @@ main { padding: 22px 28px 40px; display: grid; gap: 18px; }
 .filter { background: var(--panel-alt); border: 1px solid var(--border); color: var(--text-muted); font: 500 12px var(--mono);
           padding: 4px 10px; border-radius: 999px; }
 .filter.active { color: var(--text); border-color: var(--steel); background: var(--steel-dim); }
-.ledger { display: grid; gap: 4px; }
+.ledger { display: grid; gap: 3px; align-content: start; max-height: min(380px, 50vh); overflow-y: auto; padding-right: 4px;
+          scrollbar-width: thin; scrollbar-color: var(--border) transparent; }  /* long runs scroll here, not the page */
 .ledger-row { border: 1px solid var(--border-soft); border-radius: 8px; background: var(--panel-alt); }
 .ledger-row.arrive { animation: dm-slide 520ms cubic-bezier(.2,.9,.25,1) both; border-color: rgba(63,185,107,.45); }
 .ledger-head { width: 100%; display: grid; grid-template-columns: 52px 88px 90px 128px minmax(0, 1fr) 82px; gap: 10px;
-               align-items: center; text-align: left; background: none; border: none; color: var(--text); padding: 8px 12px; font-size: 12.5px; }
+               align-items: center; text-align: left; background: none; border: none; color: var(--text); padding: 5px 12px; font-size: 12px; }
 .ledger-head:hover { background: var(--raised); }
 .ledger-summary { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ledger-detail { padding: 0 12px 12px; }
