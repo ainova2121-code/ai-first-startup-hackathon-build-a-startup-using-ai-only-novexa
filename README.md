@@ -4,8 +4,9 @@
 
 - **Live demo:** https://aishwaryar24-hackathon-purple-teaming.hf.space. Click **Enter the demo**, then
   **Start run**; a full run takes about five minutes.
-- **Demo video:** [demo/novexa-demo.mp4](demo/novexa-demo.mp4) (4:56, captions burned in; also as
-  [demo/novexa-demo.srt](demo/novexa-demo.srt)).
+- **Demo video (watch online):** https://youtu.be/dz2Gy1rdgPE (4:56, captions burned in).
+- **Demo video (download):** [demo/novexa-demo.mp4](demo/novexa-demo.mp4), captions also as
+  [demo/novexa-demo.srt](demo/novexa-demo.srt).
 
 The hosted demo signs checkpoints with a software P-256 key, labelled "software" on the page, since a container
 has no TPM; run the console locally to see the hardware TPM co-signature.
