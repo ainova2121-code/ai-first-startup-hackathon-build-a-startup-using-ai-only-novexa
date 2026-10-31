@@ -175,7 +175,7 @@ function renderSourcePatch(e) {
 }
 
 function fileCard(e, box, open) {
-  const card = defenseCard(`Source patch before reverification: ${e.path}`, "real edit on disk", "risk-delete",
+  const card = defenseCard(`Source patch before reverification: ${e.path}`, "EDIT Successfully applied", "risk-delete",
                            `${e.kind} at line ${e.line} · ${e.approval}. Verified by: ${e.verified_by.join(" + ")}. `
                            + `sha256 ${e.sha256.slice(0, 16)}…`, box);
   const lines = e.content.replace(/\r\n/g, "\n").replace(/\n$/, "").split("\n");
