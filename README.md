@@ -8,6 +8,8 @@
 - **Demo video (download):** [demo/novexa-demo.mp4](demo/novexa-demo.mp4), captions also as
   [demo/novexa-demo.srt](demo/novexa-demo.srt).
 
+[![Watch the Novexa demo video](https://img.youtube.com/vi/dz2Gy1rdgPE/hqdefault.jpg)](https://youtu.be/dz2Gy1rdgPE)
+
 The hosted demo signs checkpoints with a software P-256 key, labelled "software" on the page, since a container
 has no TPM; run the console locally to see the hardware TPM co-signature.
 
