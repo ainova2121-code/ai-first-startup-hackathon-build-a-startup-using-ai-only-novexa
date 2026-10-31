@@ -65,7 +65,7 @@ ATTACK_TYPES = ("all", "full", "corpus", "obfuscation", "redteam", "crescendo", 
 MODEL_ATTACK_TYPES = ("full", "redteam", "crescendo", "pair", "tap")
 # Preset attacker models offered in the UI for PyRIT advanced / full runs; the endpoint and key come from
 # PURPLETEAM_ATTACKER_ENDPOINT / PURPLETEAM_ATTACKER_KEY (see attack/runner.py). Edit this one list to change them.
-ATTACKER_MODELS = ("openai/gpt-oss-20b", "openai/gpt-oss-120b", "llama-3.3-70b-versatile")
+ATTACKER_MODELS = ("openai/gpt-oss-20b", "llama-3.3-70b-versatile")
 
 
 def attacker_key_present() -> bool:

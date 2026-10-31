@@ -20,7 +20,7 @@ Beyond *being built* with AI, the product *is* AI: it runs an AI red-team engine
 | **AI web research (via Claude)** | Competitor analysis, market sizing, white-space analysis, EU AI Act / DORA / DPDP legal research |
 | **Microsoft PyRIT 1.1.0** | AI-driven adversarial red-teaming — *in the product* |
 | **Protect AI LLM Guard (DeBERTa classifier)** | ML prompt-injection detection — *in the product* |
-| **OpenAI-compatible LLM endpoint (hosted `gpt-oss-120b` for the demo)** | Drives the LedgerPilot target agents; the platform works against any OpenAI-compatible model |
+| **OpenAI-compatible LLM endpoint (hosted `gpt-oss-20b` for the demo)** | Drives the LedgerPilot target agents; the platform works against any OpenAI-compatible model |
 
 ## AI across the product lifecycle
 

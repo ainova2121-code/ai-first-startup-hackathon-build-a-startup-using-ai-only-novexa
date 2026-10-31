@@ -68,7 +68,7 @@ def author_endpoint() -> tuple[str, str, str]:
     code-fixing role, not a red-team one, and a larger/more careful model is worth defaulting to —
     a small model struggling with strict JSON mode is a known failure mode here (see attack.adaptive)."""
     base = os.environ.get("CODEMOD_AUTHOR_URL", "https://api.groq.com/openai/v1")
-    model = os.environ.get("CODEMOD_AUTHOR_MODEL", "openai/gpt-oss-120b")
+    model = os.environ.get("CODEMOD_AUTHOR_MODEL", "openai/gpt-oss-20b")
     key = platform_key("CODEMOD_AUTHOR_KEY")
     if not key:
         raise RuntimeError(missing_key("codemod-author model", "CODEMOD_AUTHOR_KEY"))

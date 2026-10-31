@@ -44,7 +44,8 @@ Pick a mode:
 
 Measured on LedgerPilot (`openai/gpt-oss-120b` via Cerebras): 8–9 of 23 attacks breach across three
 techniques — one planted bank account travels from the intake agent to the vendor and payment agents —
-while all 8 jailbreak templates hold; every breach is held on re-attack; every agent reply is under 30 s.
+while all 8 jailbreak templates hold; every breach is held on re-attack; every agent reply is under 30 s. The demo
+now defaults to the much cheaper `openai/gpt-oss-20b`, so expect different counts: results depend on the model.
 
 The pages show it live: the **discovery** map builds as agents and tools are found; **Patched files** shows
 the real diffs (and **Restore original files** undoes them); **Decision drift** compares each guard decision
