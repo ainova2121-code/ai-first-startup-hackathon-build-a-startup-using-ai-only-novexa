@@ -154,8 +154,8 @@ class _RecordingSink:
 
 
 _MODEL_STATUS = re.compile(r"Model endpoint returned (\d{3})\b")  # LedgerPilot's own 502 wording (main.py)
-_MODEL_MEANING = {401: "the API key was rejected", 403: "the API key may not use this model",
-                  404: "the model is not available to this key", 413: "the request was too large for the model",
+_MODEL_MEANING = {401: "the API key was rejected", 402: "the provider wants credits or a paid plan",
+                  403: "the API key may not use this model", 404: "the model is not available to this key", 413: "the request was too large for the model",
                   429: "the rate limit was reached", 400: "the model rejected a setting"}
 
 
