@@ -19,7 +19,7 @@ from typing import Callable
 from dotenv import load_dotenv
 
 from ledgerpilot.utils.config import Settings
-from purpleteam.adapter import TracedTarget
+from purpleteam.adapter import TargetUnavailable, TracedTarget
 from purpleteam.assessment import Assessment
 from purpleteam.attack.claims import MODEL_ATTACKS_OFF, ONLY_STATIC, model_free_attacks
 from purpleteam.attack.identity import identity_attacks
@@ -226,16 +226,19 @@ async def assess(run: Run, runs: RunStore | None, snapshots: SourceSnapshots, pu
             watched = capture.watch(target) if guard is None else target  # an unpatched copy's breach is kept
             return TracedTarget(watched, lambda calls: publish({"type": "trace", "calls": calls, "ts": time.time()}))
 
-        # The target database is visible the moment discovery is done (make_target remembers it). A pure PyRIT run
-        # also sends one legitimate request, which lights the discovery path and fills the database to inspect.
+        # The target database is visible the moment discovery is done (make_target remembers it). One legitimate
+        # request then lights the discovery path, fills the database, and proves the target can answer at all.
         try:
             preview = make_target(None)
             preview.reset()
             # Baseline: the clean seeded state every target starts from, so the Database page can mark exactly
             # what the run changed. Captured before the warm-up send, so even that shows as a change.
             run.write_json("database_baseline", preview.database_snapshot())
-            if attack_type in {"redteam", "crescendo", "pair", "tap"} and not (control and control.stop_requested):
+            if not (control and control.stop_requested):
                 preview.send(LEGIT_INVOICE)
+        except TargetUnavailable as exc:  # no answer to a normal request: every attack would be untested, so stop now
+            raise RuntimeError(f"The target cannot answer a normal request ({exc}). Fix its model settings and run "
+                               "again; no attack was sent.") from exc
         except Exception:  # preview only: it must never abort the assessment
             pass
 

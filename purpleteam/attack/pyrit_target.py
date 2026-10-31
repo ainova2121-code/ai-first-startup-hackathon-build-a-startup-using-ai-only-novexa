@@ -158,6 +158,10 @@ class PlatformPromptTarget(PromptTarget):
             # instance must not be reused for a further attempt; the caller needs a fresh one
         except Exception:
             self._in_flight = False
+            async with self._prompt_gate:  # no answer came back: free the reservation so a retry can send it again
+                self._unique_prompt_keys.discard(key)
+                if text in self.attempts:
+                    self.attempts.remove(text)
             raise
         self._in_flight = False
         self.last_observation = observation

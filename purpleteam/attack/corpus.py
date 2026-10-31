@@ -20,7 +20,7 @@ from pyrit.setup import IN_MEMORY, initialize_pyrit_async
 
 from purpleteam.adapter import Target
 from purpleteam.attack.converters import DISGUISES, disguise
-from purpleteam.attack.engine import run_attempt
+from purpleteam.attack.engine import run_patiently
 from purpleteam.attack.placement import COVER, PLACEMENTS, place
 from purpleteam.attack.outcome import BREACHED, INCONCLUSIVE, Summary, Trial, summarize
 from purpleteam.attack.pyrit_scorer import OracleScorer
@@ -251,8 +251,8 @@ async def run_corpus(
             for _ in range(max(1, samples)):
                 if control is not None and not control.checkpoint():
                     break
-                trial = await run_attempt(lambda p=payload: attack.execute_async(objective=p), pyrit_target,
-                                          oracle, timeout)
+                trial = await run_patiently(lambda p=payload: attack.execute_async(objective=p), pyrit_target,
+                                            oracle, timeout, control=control)
                 trials.append(trial)
                 if trial.outcome == BREACHED or pyrit_target.poisoned or (control and control.stop_requested):
                     break
