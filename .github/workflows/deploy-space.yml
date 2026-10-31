@@ -20,6 +20,8 @@ permissions:
 
 jobs:
   deploy:
+    # A repository not set up to deploy (no HF_SPACE variable) skips this job instead of failing every push.
+    if: vars.HF_SPACE != ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
