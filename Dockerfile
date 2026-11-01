@@ -6,7 +6,7 @@
 # No TPM exists in a container, so checkpoints are signed with a software P-256 key, labelled "software" on the page;
 # every signature still verifies. Run the console on your own machine to show the hardware TPM signature.
 #
-# Hugging Face Spaces (Docker SDK, free CPU tier):
+# Hugging Face Spaces (Docker SDK, CPU Basic hardware, which needs a PRO account; see README "Host the demo"):
 #   1. Create a Space with SDK "Docker". In its README.md front matter keep `sdk: docker` and set `app_port: 7860`.
 #   2. Settings -> Variables and secrets: add the secret LEDGERPILOT_LLM_API_KEY (your Groq key) and the variable
 #      PURPLETEAM_CONCURRENCY=4 (attacks and replays at once; a run is then bound by the model endpoint's own

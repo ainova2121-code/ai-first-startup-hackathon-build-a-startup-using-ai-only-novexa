@@ -5,7 +5,7 @@
 * ``full``     -- the standard assessment: targeted attacks, live patching, re-attack, verified source fixes, decision
                   drift, a signed and anchored seal.
 * ``advanced`` -- full, plus the fixed jailbreak corpus, its base64-disguised and document-buried variants, adaptive
-                  (TAP) search, and a tighter release gate (15% instead of 20%: more replays of every breach).
+                  (TAP) search, and the platform's own release gate (20%, tighter than the demo's: more replays).
 """
 
 from __future__ import annotations

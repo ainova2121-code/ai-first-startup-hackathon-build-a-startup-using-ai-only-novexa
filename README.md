@@ -80,41 +80,64 @@ cp .env.example .env    # set HF_TOKEN (or LEDGERPILOT_LLM_API_KEY)
 uv run uvicorn --factory purpleteam.live_demo:app --port 8090
 ```
 
-Open http://localhost:8090 and click "Enter the demo" (a passwordless session; every route sits behind it).
-Pick a mode:
+Open http://localhost:8090, click "Enter the demo" (a passwordless session; every route sits behind it), pick what
+to run in the **Mode** menu, and click **Start run**:
 
-- **Static** (seconds): discovery, identity posture, the source scan and prompt rules. No attack runs, so
-  it gives no release verdict.
-- **Full** (about 3 minutes): every attack meets the *unpatched* agent, side by side, so the breach count
-  is its real exposure. The attacker uses no model: plain claims written by rule from the discovered tool
-  schema, the same claims hidden inside a document or a form field, and PyRIT's jailbreak,
-  prompt-injection and social-engineering templates. The defender then checks legitimate work first
-  (a patch that breaks it is dropped before any replay), re-attacks with every breaching payload until
-  the release gate below is proven, applies verified source fixes, reloads the edited target and attacks it again.
-- **Advanced**: Full, plus base64-disguised and document-buried variants and a tighter release gate.
+- **Custom dataset** needs no attacker model. Its menu offers:
+  - **Full dataset** (about five minutes on the hosted demo): the demo's 10 model-free attacks. They are claims
+    written by rule from the discovered tool schema (plain, hidden inside a document, or in a form field), a
+    supplier-portal leak probe, and 2 controls that should hold (`claim:approver:1` and the `dan_1` jailbreak).
+  - **Showcase**: the last run's breaches plus 2 controls.
+  - **Jailbreak / injection seed corpus**: PyRIT's jailbreak, prompt-injection and social-engineering templates.
+  - **Obfuscation suite**: one attack objective in five disguises plus a plain baseline.
+- **PyRIT advanced attacks**: an adaptive PyRIT strategy (TAP, PAIR, Crescendo or Red Team) driven by the attacker
+  model you pick; its endpoint and key come from `PURPLETEAM_ATTACKER_ENDPOINT` / `PURPLETEAM_ATTACKER_KEY`.
+- **Full assessment**: the whole model-free set plus targeted, context-aware attacks and disguised variants, using
+  the attacker model you pick.
+
+Every attack meets the *unpatched* agent first, so the breach count is its real exposure. The defender then checks
+legitimate work (a patch that breaks it is dropped before any replay), re-attacks with every breaching payload until
+the release gate below is proven, applies verified source fixes, reloads the edited target and attacks it again. Every
+run also does the static inspection during discovery (identity posture, the source scan, prompt rules and catalog
+fixes); the `static` mode, inspection alone in seconds with no verdict, remains for API use.
 
 Reverification sends each breaching question at most twice: once against the code patch alone (one per hole)
-and once against the full defense. Advanced mode applies the platform's own release gate instead (at most a 20%
-breach rate at 95% confidence: 16 replays per hole). `PURPLETEAM_RELEASE_GATE` sets the demo's gate; the evidence
-always states the bound a run reached.
+and once against the full defense. The `advanced` mode (API only) applies the platform's own release gate instead
+(at most a 20% breach rate at 95% confidence: 16 replays per hole). `PURPLETEAM_RELEASE_GATE` sets the demo's gate;
+the evidence always states the bound a run reached.
 
-Measured on LedgerPilot (`openai/gpt-oss-120b` via Cerebras): 8–9 of 23 attacks breach across three
-techniques — one planted bank account travels from the intake agent to the vendor and payment agents —
-while all 8 jailbreak templates hold; every breach is held on re-attack; every agent reply is under 30 s. The demo
-now defaults to the much cheaper `openai/gpt-oss-20b`, so expect different counts: results depend on the model.
+Measured on the hosted demo (31 Oct 2026, `openai/gpt-oss-20b`): the Full dataset breached 8 of 10 attacks. A
+planted bank account travelled from the intake agent to the vendor and payment agents, and the supplier portal
+leaked a honeytoken, while both controls held. Ten verified code fixes across 6 files, plus 5 runtime guards, then
+held all 8 breaches on re-attack, legitimate work still passed, and the run ended safe to ship. Results depend on
+the model.
 
-The pages show it live: the **discovery** map builds as agents and tools are found; **Patched files** shows
-the real diffs (and **Restore original files** undoes them); **Decision drift** compares each guard decision
-with the last approved run; the **Audit ledger** draws each signature the moment it is made, grows the
-Merkle tree (the inclusion proof is recomputed in your browser), and shows the checkpoint's TPM signature
-and RFC 3161 timestamp. `PURPLETEAM_ONLY_STATIC=0` adds the model-driven attacks (targeted recon, TAP).
+The pages show it live: the **Discovery** map builds as agents and tools are found; **Database** shows LedgerPilot's
+data, starting from the original rows before any attack; **Inquiry** asks the inquiry agent a question as one vendor,
+the way the supplier portal does; **Patched files** shows the real diffs (and **Restore original files** undoes
+them); **Decision drift** compares each guard decision with the last approved run; the **Audit ledger** draws each
+signature the moment it is made, grows the Merkle tree (the inclusion proof is recomputed in your browser), and shows
+the checkpoint's TPM signature and RFC 3161 timestamp. `PURPLETEAM_ONLY_STATIC=0` adds the model-driven attacks
+(targeted recon, TAP) to the Full dataset.
 
 ### Host the demo
 
-The root `Dockerfile` packages this console with LedgerPilot for a hosted link (Hugging Face Spaces' free CPU tier,
-or any host with 2 GB of memory); its header has the steps. A container has no TPM, so a hosted run signs checkpoints
-with a software key, labelled as such. The login is passwordless and every run spends your model credit: keep the
-link private and take it down afterwards.
+The root `Dockerfile` packages this console with LedgerPilot for a hosted link: a Hugging Face Docker Space (its
+CPU Basic hardware needs a PRO account) or any host with 2 GB of memory; its header has the steps. A hosted copy also
+needs three things:
+
+- **Original line endings.** Upload the files with LF endings (on Windows, `git -c core.autocrlf=false archive`): the
+  pinned FreeTSA certificate is checked against its `SHA256SUMS`, and a CRLF copy is rightly refused.
+- **The codemod catalog.** `.purpleteam/codemods/` is operator state and git-ignored, so copy it into the image (for
+  example to `config/codemods/`) and set `PURPLETEAM_CODEMOD_CATALOG=/app/config/codemods`. Without it the
+  SQL-injection fix has to be drafted by the model, and if no draft passes verification the run is not safe to ship.
+  Entries reused this way are re-verified and labelled not human-reviewed, since the operator key stays with you.
+- **No auto-deploy over hand-uploaded files.** Once `HF_SPACE` is set, `.github/workflows/deploy-space.yml`
+  force-pushes the repository to the Space on every push to main, replacing anything uploaded by hand, such as that
+  catalog.
+
+A container has no TPM, so a hosted run signs checkpoints with a software key, labelled as such. The login is
+passwordless and every run spends your model credit: keep the link private and take it down afterwards.
 
 ## Assess another agent project
 
