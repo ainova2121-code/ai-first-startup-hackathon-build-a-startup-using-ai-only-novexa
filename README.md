@@ -7,6 +7,8 @@
 - **Code:** https://github.com/ainova2121-code/ai-first-startup-hackathon-build-a-startup-using-ai-only-novexa
 - **Pitch deck:** [see all 13 slides below](#pitch-deck), or download the
   [PDF](demo/novexa-pitch-deck.pdf) or [PowerPoint](demo/novexa-pitch-deck.pptx).
+- **Built with AI:** about 99% of this project was built with AI (Claude); see the
+  [AI usage report](AI_USAGE_REPORT.md).
 - **Demo video (watch online):** https://youtu.be/dz2Gy1rdgPE (4:56, captions burned in).
 - **Demo video (download):** [demo/novexa-demo.mp4](demo/novexa-demo.mp4), captions also as
   [demo/novexa-demo.srt](demo/novexa-demo.srt).
