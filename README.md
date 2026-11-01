@@ -5,8 +5,8 @@
 - **Live demo:** https://aishwaryar24-hackathon-purple-teaming.hf.space. Click **Enter the demo**, then
   **Start run**; a full run takes about five minutes.
 - **Code:** https://github.com/ainova2121-code/ai-first-startup-hackathon-build-a-startup-using-ai-only-novexa
-- **Pitch deck:** [demo/novexa-pitch-deck.pdf](demo/novexa-pitch-deck.pdf) (view in the browser), or
-  [demo/novexa-pitch-deck.pptx](demo/novexa-pitch-deck.pptx) for PowerPoint.
+- **Pitch deck:** [see all 13 slides below](#pitch-deck), or download the
+  [PDF](demo/novexa-pitch-deck.pdf) or [PowerPoint](demo/novexa-pitch-deck.pptx).
 - **Demo video (watch online):** https://youtu.be/dz2Gy1rdgPE (4:56, captions burned in).
 - **Demo video (download):** [demo/novexa-demo.mp4](demo/novexa-demo.mp4), captions also as
   [demo/novexa-demo.srt](demo/novexa-demo.srt).
@@ -20,6 +20,36 @@ has no TPM; run the console locally to see the hardware TPM co-signature.
 submitted for hackathon judging only and is not offered under this template repository's MIT license.
 
 **Note:** Claude appears as a co-author because this startup was built with AI, as the hackathon requires.
+
+## Pitch deck
+
+![Slide 1](demo/pitch-deck/slide-01.jpg)
+
+![Slide 2](demo/pitch-deck/slide-02.jpg)
+
+![Slide 3](demo/pitch-deck/slide-03.jpg)
+
+![Slide 4](demo/pitch-deck/slide-04.jpg)
+
+![Slide 5](demo/pitch-deck/slide-05.jpg)
+
+![Slide 6](demo/pitch-deck/slide-06.jpg)
+
+![Slide 7](demo/pitch-deck/slide-07.jpg)
+
+![Slide 8](demo/pitch-deck/slide-08.jpg)
+
+![Slide 9](demo/pitch-deck/slide-09.jpg)
+
+![Slide 10](demo/pitch-deck/slide-10.jpg)
+
+![Slide 11](demo/pitch-deck/slide-11.jpg)
+
+![Slide 12](demo/pitch-deck/slide-12.jpg)
+
+![Slide 13](demo/pitch-deck/slide-13.jpg)
+
+## About the platform
 
 A BYOC AI purple-team platform: it discovers an AI agent system's own agents and tools, attacks it
 with proof-based techniques (a breach must leave hard evidence — a canary value reaching a real tool
