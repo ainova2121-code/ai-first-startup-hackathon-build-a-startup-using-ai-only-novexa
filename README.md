@@ -5,6 +5,8 @@
 - **Live demo:** https://aishwaryar24-hackathon-purple-teaming.hf.space. Click **Enter the demo**, then
   **Start run**; a full run takes about five minutes.
 - **Code:** https://github.com/ainova2121-code/ai-first-startup-hackathon-build-a-startup-using-ai-only-novexa
+- **Pitch deck:** [demo/novexa-pitch-deck.pdf](demo/novexa-pitch-deck.pdf) (view in the browser), or
+  [demo/novexa-pitch-deck.pptx](demo/novexa-pitch-deck.pptx) for PowerPoint.
 - **Demo video (watch online):** https://youtu.be/dz2Gy1rdgPE (4:56, captions burned in).
 - **Demo video (download):** [demo/novexa-demo.mp4](demo/novexa-demo.mp4), captions also as
   [demo/novexa-demo.srt](demo/novexa-demo.srt).
